@@ -89,13 +89,13 @@ Technical feasibility under 1.44 MB is achieved through:
 
 ## 📂 Documentation Structure
 
-Detailed architecture and development logs are hosted in [`.codex/`](https://www.google.com/search?q=./.codex/README.md):
+Detailed architecture and development logs are hosted in [`.codex/`](./.codex/README.md):
 
-* [`01-game-vision.md`](https://www.google.com/search?q=./.codex/01-game-vision.md) — Game Design Document (GDD) and core vision.
-* [`02-development-step-by-step.md`](https://www.google.com/search?q=./.codex/02-development-step-by-step.md) — Code architecture and step-by-step milestones.
-* [`03-roadmap.md`](https://www.google.com/search?q=./.codex/03-roadmap.md) — Project roadmap and deliverables.
-* [`04-byte-budget.md`](https://www.google.com/search?q=./.codex/04-byte-budget.md) — Size allocation and optimization planning.
-* [`05-session-log.md`](https://www.google.com/search?q=./.codex/05-session-log.md) — Work log and technical decisions.
+* [`01-game-vision.md`](./.codex/01-game-vision.md) — Game Design Document (GDD) and core vision.
+* [`02-development-step-by-step.md`](./.codex/02-development-step-by-step.md) — Code architecture and step-by-step milestones.
+* [`03-roadmap.md`](./.codex/03-roadmap.md) — Project roadmap and deliverables.
+* [`04-byte-budget.md`](./.codex/04-byte-budget.md) — Size allocation and optimization planning.
+* [`05-session-log.md`](./.codex/05-session-log.md) — Work log and technical decisions.
 
 ---
 
@@ -195,13 +195,13 @@ A viabilidade técnica em < 1,44 MB é mantida através de:
 
 ## 📂 Estrutura de Documentação
 
-Os documentos detalhados de arquitetura e progresso estão organizados em [`.codex/`](https://www.google.com/search?q=./.codex/README.md):
+Os documentos detalhados de arquitetura e progresso estão organizados em [`.codex/`](./.codex/README.md):
 
-* [`01-game-vision.md`](https://www.google.com/search?q=./.codex/01-game-vision.md) — Visão detalhada do jogo e Game Design Document (GDD).
-* [`02-development-step-by-step.md`](https://www.google.com/search?q=./.codex/02-development-step-by-step.md) — Etapas de desenvolvimento e arquitetura de código.
-* [`03-roadmap.md`](https://www.google.com/search?q=./.codex/03-roadmap.md) — Cronograma e entregáveis.
-* [`04-byte-budget.md`](https://www.google.com/search?q=./.codex/04-byte-budget.md) — Planejamento e controle do limite de 1,44 MB.
-* [`05-session-log.md`](https://www.google.com/search?q=./.codex/05-session-log.md) — Diário de bordo e decisões técnicas.
+* [`01-game-vision.md`](./.codex/01-game-vision.md) — Visão detalhada do jogo e Game Design Document (GDD).
+* [`02-development-step-by-step.md`](./.codex/02-development-step-by-step.md) — Etapas de desenvolvimento e arquitetura de código.
+* [`03-roadmap.md`](./.codex/03-roadmap.md) — Cronograma e entregáveis.
+* [`04-byte-budget.md`](./.codex/04-byte-budget.md) — Planejamento e controle do limite de 1,44 MB.
+* [`05-session-log.md`](./.codex/05-session-log.md) — Diário de bordo e decisões técnicas.
 
 ---
 
