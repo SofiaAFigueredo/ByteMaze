@@ -1,4 +1,4 @@
-# 🇺🇸 English Version
+# 🇺🇸 English
 
 # ByteMaze
 
