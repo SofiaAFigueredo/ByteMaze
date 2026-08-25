@@ -292,6 +292,14 @@ void UpdatePlayer(void)
     }
 }
 
+bool DidPlayerReachExit(void)
+{
+    int playerCellX = (int)(player.position.x / TILE_SIZE);
+    int playerCellY = (int)(player.position.y / TILE_SIZE);
+
+    return grid[playerCellY][playerCellX] == CELL_EXIT;
+}
+
 void DrawPlayer(void)
 {
     float scale = GetMazeScale();
@@ -332,6 +340,12 @@ int main(int argc, char *argv[])
     while (!WindowShouldClose())
     {
         UpdatePlayer();
+
+        if (DidPlayerReachExit())
+        {
+            GenerateMaze();
+            InitPlayer();
+        }
 
         BeginDrawing();
         ClearBackground(BLACK);
