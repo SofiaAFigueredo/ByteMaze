@@ -1,5 +1,6 @@
 #include "raylib.h"
 #include "math.h"
+#include <sys/stat.h>
 
 #define SCREEN_WIDTH 960
 #define SCREEN_HEIGHT 640
@@ -7,12 +8,77 @@
 #define GRID_HEIGTH 21
 #define GRID_WIDTH 31
 #define TILE_SIZE 24
+#define HUD_HEIGHT 56.0f
+#define MAZE_PADDING 24.0f
+#define CONTEST_BYTE_LIMIT 1474560LL
 
 #define CELL_WALL 0
 #define CELL_PATH 1
 #define CELL_EXIT 2
 
 int grid[GRID_HEIGTH][GRID_WIDTH];
+long long executableSizeBytes = -1;
+float executableUsagePercent = 0.0f;
+
+float GetMazeScale(void)
+{
+    float mazeWidth = (float)(GRID_WIDTH * TILE_SIZE);
+    float mazeHeight = (float)(GRID_HEIGTH * TILE_SIZE);
+    float availableWidth = (float)GetScreenWidth() - (MAZE_PADDING * 2.0f);
+    float availableHeight = (float)GetScreenHeight() - HUD_HEIGHT - (MAZE_PADDING * 2.0f);
+    float scaleX = availableWidth / mazeWidth;
+    float scaleY = availableHeight / mazeHeight;
+    return fminf(scaleX, scaleY);
+}
+
+Vector2 GetMazeOffset(float scale)
+{
+    float mazeWidth = (float)(GRID_WIDTH * TILE_SIZE) * scale;
+    float mazeHeight = (float)(GRID_HEIGTH * TILE_SIZE) * scale;
+    float freeWidth = (float)GetScreenWidth() - mazeWidth;
+    float freeHeight = (float)GetScreenHeight() - HUD_HEIGHT - mazeHeight;
+
+    Vector2 offset = { 0 };
+    offset.x = freeWidth * 0.5f;
+    offset.y = HUD_HEIGHT + (freeHeight * 0.5f);
+    return offset;
+}
+
+Vector2 WorldToScreenPosition(Vector2 worldPosition, float scale, Vector2 offset)
+{
+    Vector2 screenPosition = { 0 };
+    screenPosition.x = offset.x + (worldPosition.x * scale);
+    screenPosition.y = offset.y + (worldPosition.y * scale);
+    return screenPosition;
+}
+
+long long GetFileSizeBytes(const char *filePath)
+{
+    struct stat fileInfo = { 0 };
+
+    if (stat(filePath, &fileInfo) != 0)
+    {
+        return -1;
+    }
+
+    return (long long)fileInfo.st_size;
+}
+
+float GetContestUsagePercent(long long usedBytes)
+{
+    if (usedBytes <= 0)
+    {
+        return 0.0f;
+    }
+
+    return ((float)usedBytes / (float)CONTEST_BYTE_LIMIT) * 100.0f;
+}
+
+void UpdateBuildMetrics(const char *executablePath)
+{
+    executableSizeBytes = GetFileSizeBytes(executablePath);
+    executableUsagePercent = GetContestUsagePercent(executableSizeBytes);
+}
 
 // Labirinto
 
@@ -119,6 +185,10 @@ void GenerateMaze(void)
 
 void DrawMazeGrid(void)
 {
+    float scale = GetMazeScale();
+    float drawTileSize = (float)TILE_SIZE * scale;
+    Vector2 offset = GetMazeOffset(scale);
+
     for (int y = 0; y < GRID_HEIGTH; y++)
     {
         for (int x = 0; x < GRID_WIDTH; x++)
@@ -138,7 +208,9 @@ void DrawMazeGrid(void)
                 cellColor = GREEN;
             }
 
-            DrawRectangle(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE, cellColor);
+            Vector2 position = { offset.x + ((float)x * drawTileSize), offset.y + ((float)y * drawTileSize) };
+            Vector2 size = { drawTileSize, drawTileSize };
+            DrawRectangleV(position, size, cellColor);
         }
     }
 }
@@ -149,6 +221,7 @@ typedef struct Player
     Vector2 position;
     float radius;
     float speed;
+    float facingAngle;
 } Player;
 
 Player player;
@@ -181,7 +254,8 @@ bool IsPositionBlocked(Vector2 position, float radius)
 void InitPlayer(void)
 {
     player.radius = 8.0f;
-    player.speed = 120.0f;
+    player.speed = 65.0f;
+    player.facingAngle = 0.0f;
     player.position.x = TILE_SIZE * 1.5f;
     player.position.y = TILE_SIZE * 1.5f;
 }
@@ -200,6 +274,7 @@ void UpdatePlayer(void)
         float length = sqrtf(movement.x * movement.x + movement.y * movement.y);
         movement.x /= length;
         movement.y /= length;
+        player.facingAngle = atan2f(movement.y, movement.x);
 
         float frameSpeed = player.speed * GetFrameTime();
         Vector2 nextPosition = player.position;
@@ -222,18 +297,40 @@ void UpdatePlayer(void)
 
 void DrawPlayer(void)
 {
-    Vector2 top = { player.position.x, player.position.y - player.radius };
-    Vector2 left = { player.position.x - player.radius, player.position.y + player.radius };
-    Vector2 right = { player.position.x + player.radius, player.position.y + player.radius };
+    float scale = GetMazeScale();
+    Vector2 offset = GetMazeOffset(scale);
+    Vector2 center = WorldToScreenPosition(player.position, scale, offset);
+    float drawRadius = fmaxf(player.radius * scale, 6.0f);
 
-    DrawTriangle(top, left, right, GOLD);
+    // Vértice da frente (ponta)
+    Vector2 tip = {
+        center.x + (cosf(player.facingAngle) * drawRadius * 1.15f),
+        center.y + (sinf(player.facingAngle) * drawRadius * 1.15f)
+    };
+    
+    // Vértices traseiros (ordem invertida: right depois left garante sentido anti-horário)
+    Vector2 left = {
+        center.x + (cosf(player.facingAngle + 2.45f) * drawRadius * 0.95f),
+        center.y + (sinf(player.facingAngle + 2.45f) * drawRadius * 0.95f)
+    };
+    Vector2 right = {
+        center.x + (cosf(player.facingAngle - 2.45f) * drawRadius * 0.95f),
+        center.y + (sinf(player.facingAngle - 2.45f) * drawRadius * 0.95f)
+    };
+
+    // Desenha apenas o triângulo preenchido
+    DrawTriangle(tip, right, left, GOLD);
 }
 
-int main(void)
+int main(int argc, char *argv[])
 {
+    (void)argc;
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "ByteMaze");
+    MaximizeWindow();
     SetTargetFPS(60);
     SetRandomSeed((unsigned int)GetTime());
+    UpdateBuildMetrics(argv[0]);
 
     GenerateMaze();
     InitPlayer();
@@ -247,7 +344,8 @@ int main(void)
 
         DrawMazeGrid();
         DrawPlayer();
-        DrawText("ByteMaze - etapa inicial", 20, 20, 20, GREEN);
+        DrawText("ByteMaze - etapa inicial", 20, 18, 20, GREEN);
+        DrawText(TextFormat("Build: %lld bytes (%.2f%% de 1,474,560)", executableSizeBytes, executableUsagePercent), 20, 40, 16, LIGHTGRAY);
 
         EndDrawing();
     }
