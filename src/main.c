@@ -298,10 +298,12 @@ void DrawPlayer(void)
     Vector2 offset = GetMazeOffset(scale);
     Vector2 center = WorldToScreenPosition(player.position, scale, offset);
     float drawRadius = fmaxf(player.radius * scale, 6.0f);
+
     Vector2 tip = {
         center.x + (cosf(player.facingAngle) * drawRadius * 1.15f),
         center.y + (sinf(player.facingAngle) * drawRadius * 1.15f)
     };
+    
     Vector2 left = {
         center.x + (cosf(player.facingAngle + 2.45f) * drawRadius * 0.95f),
         center.y + (sinf(player.facingAngle + 2.45f) * drawRadius * 0.95f)
@@ -310,13 +312,8 @@ void DrawPlayer(void)
         center.x + (cosf(player.facingAngle - 2.45f) * drawRadius * 0.95f),
         center.y + (sinf(player.facingAngle - 2.45f) * drawRadius * 0.95f)
     };
-    float cornerRadius = fmaxf(drawRadius * 0.22f, 2.0f);
 
-    DrawTriangle(tip, left, right, GOLD);
-    DrawCircleV(tip, cornerRadius, GOLD);
-    DrawCircleV(left, cornerRadius, GOLD);
-    DrawCircleV(right, cornerRadius, GOLD);
-    DrawTriangleLines(tip, left, right, ORANGE);
+    DrawTriangle(tip, right, left, GOLD);
 }
 
 int main(int argc, char *argv[])
