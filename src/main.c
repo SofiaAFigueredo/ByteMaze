@@ -1,4 +1,5 @@
 #include "raylib.h"
+#include "math.h"
 
 #define SCREEN_WIDTH 960
 #define SCREEN_HEIGHT 640
@@ -12,6 +13,8 @@
 #define CELL_EXIT 2
 
 int grid[GRID_HEIGTH][GRID_WIDTH];
+
+// Labirinto
 
 void FillGridWithWalls(void)
 {
@@ -140,6 +143,92 @@ void DrawMazeGrid(void)
     }
 }
 
+// Jogador
+typedef struct Player
+{
+    Vector2 position;
+    float radius;
+    float speed;
+} Player;
+
+Player player;
+
+bool IsWallCell(int x, int y)
+{
+    if (x < 0 || x >= GRID_WIDTH || y < 0 || y >= GRID_HEIGTH)
+    {
+        return true;
+    }
+
+    return grid[y][x] == CELL_WALL;
+}
+
+bool IsPositionBlocked(Vector2 position, float radius)
+{
+    int left = (int)(position.x - radius) / TILE_SIZE;
+    int right = (int)(position.x + radius) / TILE_SIZE;
+    int top = (int)(position.y - radius) / TILE_SIZE;
+    int bottom = (int)(position.y + radius) / TILE_SIZE;
+
+    if (IsWallCell(left, top)) return true;
+    if (IsWallCell(right, top)) return true;
+    if (IsWallCell(left, bottom)) return true;
+    if (IsWallCell(right, bottom)) return true;
+
+    return false;
+}
+
+void InitPlayer(void)
+{
+    player.radius = 8.0f;
+    player.speed = 120.0f;
+    player.position.x = TILE_SIZE * 1.5f;
+    player.position.y = TILE_SIZE * 1.5f;
+}
+
+void UpdatePlayer(void)
+{
+    Vector2 movement = { 0 };
+
+    if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP)) movement.y -= 1.0f;
+    if (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN)) movement.y += 1.0f;
+    if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) movement.x -= 1.0f;
+    if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) movement.x += 1.0f;
+
+    if (movement.x != 0.0f || movement.y != 0.0f)
+    {
+        float length = sqrtf(movement.x * movement.x + movement.y * movement.y);
+        movement.x /= length;
+        movement.y /= length;
+
+        float frameSpeed = player.speed * GetFrameTime();
+        Vector2 nextPosition = player.position;
+
+        nextPosition.x += movement.x * frameSpeed;
+        if (!IsPositionBlocked(nextPosition, player.radius))
+        {
+            player.position.x = nextPosition.x;
+        }
+
+        nextPosition = player.position;
+        nextPosition.y += movement.y * frameSpeed;
+
+        if (!IsPositionBlocked(nextPosition, player.radius))
+        {
+            player.position.y = nextPosition.y;
+        }
+    }
+}
+
+void DrawPlayer(void)
+{
+    Vector2 top = { player.position.x, player.position.y - player.radius };
+    Vector2 left = { player.position.x - player.radius, player.position.y + player.radius };
+    Vector2 right = { player.position.x + player.radius, player.position.y + player.radius };
+
+    DrawTriangle(top, left, right, GOLD);
+}
+
 int main(void)
 {
     InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "ByteMaze");
@@ -147,13 +236,17 @@ int main(void)
     SetRandomSeed((unsigned int)GetTime());
 
     GenerateMaze();
+    InitPlayer();
 
     while (!WindowShouldClose())
     {
+        UpdatePlayer();
+
         BeginDrawing();
         ClearBackground(BLACK);
 
         DrawMazeGrid();
+        DrawPlayer();
         DrawText("ByteMaze - etapa inicial", 20, 20, 20, GREEN);
 
         EndDrawing();
