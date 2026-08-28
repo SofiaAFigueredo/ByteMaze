@@ -221,6 +221,18 @@ typedef struct Player
     float facingAngle;
 } Player;
 
+typedef struct Enemy
+{
+    Vector2 position;
+    Vector2 direction;
+    float radius;
+    float speed;
+    bool active;
+} Enemy;
+
+Enemy enemy;
+bool playerAlive = true;
+
 Player player;
 
 bool IsWallCell(int x, int y)
@@ -300,6 +312,187 @@ bool DidPlayerReachExit(void)
     return grid[playerCellY][playerCellX] == CELL_EXIT;
 }
 
+Vector2 FindEnemySpawnPosition(void)
+{
+    for (int y = GRID_HEIGTH - 2; y >= 1; y--)
+    {
+        for (int x = GRID_WIDTH - 2; x >= 1; x--)
+        {
+            if (grid[y][x] == CELL_PATH)
+            {
+                Vector2 spawnPosition = { 0 };
+                spawnPosition.x = ((float)x + 0.5f) * TILE_SIZE;
+                spawnPosition.y = ((float)y + 0.5f) * TILE_SIZE;
+                return spawnPosition;
+            }
+        }
+    }
+
+    return (Vector2){ TILE_SIZE * 1.5f, TILE_SIZE * 1.5f };
+}
+
+void InitEnemy(void)
+{
+    enemy.radius = 8.0f;
+    enemy.speed = 45.0f;
+    enemy.active = true;
+    enemy.position = FindEnemySpawnPosition();
+    enemy.direction = (Vector2){ -1.0f, 0.0f };
+}
+
+int CollectEnemyDirections(Vector2 options[4], bool allowReverse)
+{
+    Vector2 oppositeDirection = { -enemy.direction.x, -enemy.direction.y };
+    float testDistance = TILE_SIZE * 0.5f;
+    int validCount = 0;
+    Vector2 directions[4] = {
+        { 1.0f, 0.0f },
+        { -1.0f, 0.0f },
+        { 0.0f, 1.0f },
+        { 0.0f, -1.0f }
+    };
+
+    for (int i = 0; i < 4; i++)
+    {
+        Vector2 testPosition = enemy.position;
+        testPosition.x += directions[i].x * testDistance;
+        testPosition.y += directions[i].y * testDistance;
+
+        if (!IsPositionBlocked(testPosition, enemy.radius))
+        {
+            if (!allowReverse && directions[i].x == oppositeDirection.x && directions[i].y == oppositeDirection.y)
+            {
+                continue;
+            }
+
+            options[validCount] = directions[i];
+            validCount++;
+        }
+    }
+
+    return validCount;
+}
+
+bool IsEnemyNearCellCenter(void)
+{
+    int cellX = (int)(enemy.position.x / TILE_SIZE);
+    int cellY = (int)(enemy.position.y / TILE_SIZE);
+    float centerX = ((float)cellX + 0.5f) * TILE_SIZE;
+    float centerY = ((float)cellY + 0.5f) * TILE_SIZE;
+    float tolerance = 2.0f;
+
+    return fabsf(enemy.position.x - centerX) <= tolerance && fabsf(enemy.position.y - centerY) <= tolerance;
+}
+
+void ChooseEnemyDirection(bool allowReverse)
+{
+    Vector2 validDirections[4];
+    int validCount = CollectEnemyDirections(validDirections, allowReverse);
+
+    if (validCount == 0)
+    {
+        if (!allowReverse)
+        {
+            enemy.direction = (Vector2){ -enemy.direction.x, -enemy.direction.y };
+        }
+        return;
+    }
+
+    enemy.direction = validDirections[GetRandomValue(0, validCount - 1)];
+}
+
+void UpdateEnemy(void)
+{
+    if (!enemy.active || !playerAlive)
+    {
+        return;
+    }
+
+    float frameSpeed = enemy.speed * GetFrameTime();
+    Vector2 nextPosition = enemy.position;
+
+    nextPosition.x += enemy.direction.x * frameSpeed;
+    nextPosition.y += enemy.direction.y * frameSpeed;
+
+    if (IsPositionBlocked(nextPosition, enemy.radius))
+    {
+        ChooseEnemyDirection(true);
+        return;
+    }
+
+    enemy.position = nextPosition;
+
+    if (IsEnemyNearCellCenter())
+    {
+        Vector2 validDirections[4];
+        int validCount = CollectEnemyDirections(validDirections, false);
+
+        if (validCount > 1)
+        {
+            ChooseEnemyDirection(false);
+        }
+    }
+}
+
+bool DidEnemyTouchPlayer(void)
+{
+    float dx = enemy.position.x - player.position.x;
+    float dy = enemy.position.y - player.position.y;
+    float distance = sqrtf((dx * dx) + (dy * dy));
+    float touchDistance = enemy.radius + player.radius;
+
+    return distance <= touchDistance;
+}
+
+void ResetGame(void)
+{
+    playerAlive = true;
+    GenerateMaze();
+    InitPlayer();
+    InitEnemy();
+}
+
+void DrawGameOverOverlay(void)
+{
+    const char *title = "VOCE MORREU";
+    const char *buttonText = "JOGAR DE NOVO";
+    int titleFontSize = 42;
+    int buttonFontSize = 24;
+    int titleWidth = MeasureText(title, titleFontSize);
+    int buttonTextWidth = MeasureText(buttonText, buttonFontSize);
+    int screenWidth = GetScreenWidth();
+    int screenHeight = GetScreenHeight();
+    int panelWidth = 420;
+    int panelHeight = 220;
+    Rectangle panel = {
+        (float)((screenWidth - panelWidth) / 2),
+        (float)((screenHeight - panelHeight) / 2),
+        (float)panelWidth,
+        (float)panelHeight
+    };
+    Rectangle button = {
+        panel.x + 70.0f,
+        panel.y + 130.0f,
+        panel.width - 140.0f,
+        54.0f
+    };
+    Vector2 mousePosition = GetMousePosition();
+    bool isButtonHovered = CheckCollisionPointRec(mousePosition, button);
+    Color buttonColor = isButtonHovered ? LIME : GREEN;
+
+    DrawRectangle(0, 0, screenWidth, screenHeight, Fade(BLACK, 0.55f));
+    DrawRectangleRounded(panel, 0.12f, 12, (Color){ 24, 24, 24, 235 });
+    DrawRectangleRoundedLinesEx(panel, 0.12f, 12, 3.0f, GREEN);
+    DrawText(title, (int)(panel.x + (panel.width - titleWidth) * 0.5f), (int)panel.y + 44, titleFontSize, RAYWHITE);
+    DrawRectangleRounded(button, 0.3f, 12, buttonColor);
+    DrawText(buttonText, (int)(button.x + (button.width - buttonTextWidth) * 0.5f), (int)(button.y + 14.0f), buttonFontSize, BLACK);
+
+    if (isButtonHovered && IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+    {
+        ResetGame();
+    }
+}
+
 void DrawPlayer(void)
 {
     float scale = GetMazeScale();
@@ -324,6 +517,21 @@ void DrawPlayer(void)
     DrawTriangle(tip, right, left, GOLD);
 }
 
+void DrawEnemy(void)
+{
+    if (!enemy.active)
+    {
+        return;
+    }
+
+    float scale = GetMazeScale();
+    Vector2 offset = GetMazeOffset(scale);
+    Vector2 center = WorldToScreenPosition(enemy.position, scale, offset);
+    float drawRadius = fmaxf(enemy.radius * scale, 6.0f);
+
+    DrawCircleV(center, drawRadius, RED);
+}
+
 int main(int argc, char *argv[])
 {
     (void)argc;
@@ -336,15 +544,24 @@ int main(int argc, char *argv[])
 
     GenerateMaze();
     InitPlayer();
+    InitEnemy();
 
     while (!WindowShouldClose())
     {
-        UpdatePlayer();
-
-        if (DidPlayerReachExit())
+        if (playerAlive)
         {
-            GenerateMaze();
-            InitPlayer();
+            UpdatePlayer();
+            UpdateEnemy();
+
+            if (DidEnemyTouchPlayer())
+            {
+                playerAlive = false;
+            }
+        }
+
+        if (playerAlive && DidPlayerReachExit())
+        {
+            ResetGame();
         }
 
         BeginDrawing();
@@ -352,8 +569,14 @@ int main(int argc, char *argv[])
 
         DrawMazeGrid();
         DrawPlayer();
+        DrawEnemy();
         DrawText("ByteMaze - etapa inicial", 20, 18, 20, GREEN);
         DrawText(TextFormat("Build: %lld bytes (%.2f%% de 1,474,560)", executableSizeBytes, executableUsagePercent), 20, 40, 16, LIGHTGRAY);
+
+        if (!playerAlive)
+        {
+            DrawGameOverOverlay();
+        }
 
         EndDrawing();
     }
