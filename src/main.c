@@ -15,14 +15,24 @@
 #define CELL_WALL 0
 #define CELL_PATH 1
 #define CELL_EXIT 2
-#define ENEMY_COUNT 3
+#define RED_ENEMY_COUNT 3
+#define BLUE_ENEMY_COUNT 2
+#define MAX_BULLETS 48
 #define FLASHLIGHT_MAX_BATTERY 100.0f
+#define PLAYER_BULLET_SPEED 220.0f
+#define BLUE_BULLET_SPEED 140.0f
+#define BULLET_RADIUS 4.0f
+#define BLUE_HIT_LIMIT 5
+#define BLUE_KNOCKOUT_TIME 5.0f
+#define PLAYER_MAX_HEALTH 100
+#define BLUE_BULLET_DAMAGE 10
 
 int grid[GRID_HEIGTH][GRID_WIDTH];
 long long executableSizeBytes = -1;
 float executableUsagePercent = 0.0f;
 bool flashlightOn = false;
 float flashlightBattery = FLASHLIGHT_MAX_BATTERY;
+int playerHealth = PLAYER_MAX_HEALTH;
 
 float GetMazeScale(void)
 {
@@ -193,6 +203,12 @@ typedef struct Player
     float facingAngle;
 } Player;
 
+typedef enum EnemyType
+{
+    ENEMY_RED,
+    ENEMY_BLUE
+} EnemyType;
+
 typedef struct Enemy
 {
     Vector2 position;
@@ -200,12 +216,30 @@ typedef struct Enemy
     float radius;
     float speed;
     bool active;
+    EnemyType type;
+    int hitsTaken;
+    float knockoutTimer;
+    float shootPauseTimer;
 } Enemy;
 
-Enemy enemies[ENEMY_COUNT];
+typedef struct Bullet
+{
+    Vector2 position;
+    Vector2 direction;
+    float speed;
+    float radius;
+    bool active;
+    bool fromPlayer;
+} Bullet;
+
+Enemy redEnemies[RED_ENEMY_COUNT];
+Enemy blueEnemies[BLUE_ENEMY_COUNT];
+Bullet bullets[MAX_BULLETS];
 bool playerAlive = true;
 
 Player player;
+
+void SpawnBullet(Vector2 position, Vector2 direction, float speed, bool fromPlayer);
 
 float GetDistanceBetweenPoints(Vector2 a, Vector2 b)
 {
@@ -377,6 +411,18 @@ void UpdateFlashlight(void)
     }
 }
 
+void UpdatePlayerShooting(void)
+{
+    if (IsKeyPressed(KEY_SPACE))
+    {
+        Vector2 shotDirection = { cosf(player.facingAngle), sinf(player.facingAngle) };
+        Vector2 shotOrigin = player.position;
+        shotOrigin.x += shotDirection.x * (player.radius + 8.0f);
+        shotOrigin.y += shotDirection.y * (player.radius + 8.0f);
+        SpawnBullet(shotOrigin, shotDirection, PLAYER_BULLET_SPEED, true);
+    }
+}
+
 bool DidPlayerReachExit(void)
 {
     int playerCellX = (int)(player.position.x / TILE_SIZE);
@@ -385,28 +431,59 @@ bool DidPlayerReachExit(void)
     return grid[playerCellY][playerCellX] == CELL_EXIT;
 }
 
-bool IsSpawnCellAvailable(int cellX, int cellY, int enemyIndex)
+bool IsCellOccupiedByEnemy(int cellX, int cellY)
+{
+    for (int i = 0; i < RED_ENEMY_COUNT; i++)
+    {
+        if (!redEnemies[i].active)
+        {
+            continue;
+        }
+
+        int otherCellX = (int)(redEnemies[i].position.x / TILE_SIZE);
+        int otherCellY = (int)(redEnemies[i].position.y / TILE_SIZE);
+
+        if (otherCellX == cellX && otherCellY == cellY)
+        {
+            return true;
+        }
+    }
+
+    for (int i = 0; i < BLUE_ENEMY_COUNT; i++)
+    {
+        if (!blueEnemies[i].active)
+        {
+            continue;
+        }
+
+        int otherCellX = (int)(blueEnemies[i].position.x / TILE_SIZE);
+        int otherCellY = (int)(blueEnemies[i].position.y / TILE_SIZE);
+
+        if (otherCellX == cellX && otherCellY == cellY)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool IsSpawnCellAvailable(int cellX, int cellY)
 {
     if (grid[cellY][cellX] != CELL_PATH)
     {
         return false;
     }
 
-    for (int i = 0; i < enemyIndex; i++)
+    if (cellX == 1 && cellY == 1)
     {
-        int otherCellX = (int)(enemies[i].position.x / TILE_SIZE);
-        int otherCellY = (int)(enemies[i].position.y / TILE_SIZE);
-
-        if (otherCellX == cellX && otherCellY == cellY)
-        {
-            return false;
-        }
+        return false;
     }
 
-    return !(cellX == 1 && cellY == 1);
+    return !IsCellOccupiedByEnemy(cellX, cellY);
 }
 
-Vector2 FindEnemySpawnPosition(int enemyIndex)
+Vector2 FindEnemySpawnPosition(int spawnSlot, int totalSlots)
 {
     int pathCellsX[GRID_WIDTH * GRID_HEIGTH];
     int pathCellsY[GRID_WIDTH * GRID_HEIGTH];
@@ -416,7 +493,7 @@ Vector2 FindEnemySpawnPosition(int enemyIndex)
     {
         for (int x = 1; x < GRID_WIDTH - 1; x++)
         {
-            if (IsSpawnCellAvailable(x, y, enemyIndex))
+            if (IsSpawnCellAvailable(x, y))
             {
                 pathCellsX[pathCount] = x;
                 pathCellsY[pathCount] = y;
@@ -427,7 +504,8 @@ Vector2 FindEnemySpawnPosition(int enemyIndex)
 
     if (pathCount > 0)
     {
-        int index = (pathCount * (enemyIndex + 1)) / (ENEMY_COUNT + 1);
+        int index = (pathCount * (spawnSlot + 1)) / (totalSlots + 1);
+        if (index >= pathCount) index = pathCount - 1;
         Vector2 spawnPosition = { 0 };
         spawnPosition.x = ((float)pathCellsX[index] + 0.5f) * TILE_SIZE;
         spawnPosition.y = ((float)pathCellsY[index] + 0.5f) * TILE_SIZE;
@@ -437,15 +515,62 @@ Vector2 FindEnemySpawnPosition(int enemyIndex)
     return (Vector2){ TILE_SIZE * 1.5f, TILE_SIZE * 1.5f };
 }
 
+void InitBullets(void)
+{
+    for (int i = 0; i < MAX_BULLETS; i++)
+    {
+        bullets[i].active = false;
+    }
+}
+
+void SpawnBullet(Vector2 position, Vector2 direction, float speed, bool fromPlayer)
+{
+    for (int i = 0; i < MAX_BULLETS; i++)
+    {
+        if (!bullets[i].active)
+        {
+            bullets[i].active = true;
+            bullets[i].position = position;
+            bullets[i].direction = direction;
+            bullets[i].speed = speed;
+            bullets[i].radius = BULLET_RADIUS;
+            bullets[i].fromPlayer = fromPlayer;
+            break;
+        }
+    }
+}
+
 void InitEnemies(void)
 {
-    for (int i = 0; i < ENEMY_COUNT; i++)
+    int spawnSlot = 0;
+    int totalSlots = RED_ENEMY_COUNT + BLUE_ENEMY_COUNT;
+
+    for (int i = 0; i < RED_ENEMY_COUNT; i++)
     {
-        enemies[i].radius = 8.0f;
-        enemies[i].speed = 45.0f + (float)(i * 5);
-        enemies[i].active = true;
-        enemies[i].position = FindEnemySpawnPosition(i);
-        enemies[i].direction = (Vector2){ -1.0f, 0.0f };
+        redEnemies[i].radius = 8.0f;
+        redEnemies[i].speed = 45.0f + (float)(i * 5);
+        redEnemies[i].active = true;
+        redEnemies[i].type = ENEMY_RED;
+        redEnemies[i].hitsTaken = 0;
+        redEnemies[i].knockoutTimer = 0.0f;
+        redEnemies[i].shootPauseTimer = 0.0f;
+        redEnemies[i].position = FindEnemySpawnPosition(spawnSlot, totalSlots);
+        redEnemies[i].direction = (Vector2){ -1.0f, 0.0f };
+        spawnSlot++;
+    }
+
+    for (int i = 0; i < BLUE_ENEMY_COUNT; i++)
+    {
+        blueEnemies[i].radius = 9.0f;
+        blueEnemies[i].speed = 56.0f + (float)(i * 6);
+        blueEnemies[i].active = true;
+        blueEnemies[i].type = ENEMY_BLUE;
+        blueEnemies[i].hitsTaken = 0;
+        blueEnemies[i].knockoutTimer = 0.0f;
+        blueEnemies[i].shootPauseTimer = 0.0f;
+        blueEnemies[i].position = FindEnemySpawnPosition(spawnSlot, totalSlots);
+        blueEnemies[i].direction = (Vector2){ 1.0f, 0.0f };
+        spawnSlot++;
     }
 }
 
@@ -493,7 +618,15 @@ bool IsEnemyNearCellCenter(Enemy *enemy)
     return fabsf(enemy->position.x - centerX) <= tolerance && fabsf(enemy->position.y - centerY) <= tolerance;
 }
 
-void ChooseEnemyDirection(Enemy *enemy, bool allowReverse)
+float GetDirectionPlayerDistance(Enemy *enemy, Vector2 direction)
+{
+    Vector2 testPosition = enemy->position;
+    testPosition.x += direction.x * TILE_SIZE;
+    testPosition.y += direction.y * TILE_SIZE;
+    return GetDistanceBetweenPoints(testPosition, player.position);
+}
+
+void ChooseRedEnemyDirection(Enemy *enemy, bool allowReverse)
 {
     Vector2 validDirections[4];
     int validCount = CollectEnemyDirections(enemy, validDirections, allowReverse);
@@ -510,7 +643,85 @@ void ChooseEnemyDirection(Enemy *enemy, bool allowReverse)
     enemy->direction = validDirections[GetRandomValue(0, validCount - 1)];
 }
 
-void UpdateEnemy(Enemy *enemy)
+void ChooseBlueEnemyDirection(Enemy *enemy, bool allowReverse)
+{
+    Vector2 validDirections[4];
+    int validCount = CollectEnemyDirections(enemy, validDirections, allowReverse);
+
+    if (validCount == 0)
+    {
+        if (!allowReverse)
+        {
+            enemy->direction = (Vector2){ -enemy->direction.x, -enemy->direction.y };
+        }
+        return;
+    }
+
+    float bestDistance = 1000000.0f;
+    int bestIndices[4] = { 0 };
+    int bestCount = 0;
+
+    for (int i = 0; i < validCount; i++)
+    {
+        float distance = GetDirectionPlayerDistance(enemy, validDirections[i]);
+
+        if (distance < bestDistance - 0.1f)
+        {
+            bestDistance = distance;
+            bestIndices[0] = i;
+            bestCount = 1;
+        }
+        else if (fabsf(distance - bestDistance) <= 0.1f)
+        {
+            bestIndices[bestCount] = i;
+            bestCount++;
+        }
+    }
+
+    enemy->direction = validDirections[bestIndices[GetRandomValue(0, bestCount - 1)]];
+}
+
+bool IsEnemyAlignedWithPlayer(Enemy *enemy, Vector2 *shotDirection)
+{
+    int enemyCellX = (int)(enemy->position.x / TILE_SIZE);
+    int enemyCellY = (int)(enemy->position.y / TILE_SIZE);
+    int playerCellX = (int)(player.position.x / TILE_SIZE);
+    int playerCellY = (int)(player.position.y / TILE_SIZE);
+
+    if (enemyCellX == playerCellX)
+    {
+        int step = (playerCellY > enemyCellY) ? 1 : -1;
+        for (int y = enemyCellY + step; y != playerCellY; y += step)
+        {
+            if (grid[y][enemyCellX] == CELL_WALL)
+            {
+                return false;
+            }
+        }
+
+        *shotDirection = (Vector2){ 0.0f, (playerCellY > enemyCellY) ? 1.0f : -1.0f };
+        return true;
+    }
+
+    if (enemyCellY == playerCellY)
+    {
+        int step = (playerCellX > enemyCellX) ? 1 : -1;
+        for (int x = enemyCellX + step; x != playerCellX; x += step)
+        {
+            if (grid[enemyCellY][x] == CELL_WALL)
+            {
+                return false;
+            }
+        }
+
+        *shotDirection = (Vector2){ (playerCellX > enemyCellX) ? 1.0f : -1.0f, 0.0f };
+        return true;
+    }
+
+    return false;
+}
+
+void UpdateRedEnemy(Enemy *enemy)
 {
     if (!enemy->active || !playerAlive)
     {
@@ -525,7 +736,7 @@ void UpdateEnemy(Enemy *enemy)
 
     if (IsPositionBlocked(nextPosition, enemy->radius))
     {
-        ChooseEnemyDirection(enemy, true);
+        ChooseRedEnemyDirection(enemy, true);
         return;
     }
 
@@ -538,19 +749,115 @@ void UpdateEnemy(Enemy *enemy)
 
         if (validCount > 1)
         {
-            ChooseEnemyDirection(enemy, false);
+            ChooseRedEnemyDirection(enemy, false);
         }
     }
 }
 
+void UpdateBlueEnemy(Enemy *enemy)
+{
+    if (!enemy->active || !playerAlive)
+    {
+        return;
+    }
+
+    if (enemy->knockoutTimer > 0.0f)
+    {
+        enemy->knockoutTimer -= GetFrameTime();
+        if (enemy->knockoutTimer <= 0.0f)
+        {
+            enemy->knockoutTimer = 0.0f;
+            enemy->hitsTaken = 0;
+        }
+        return;
+    }
+
+    if (enemy->shootPauseTimer > 0.0f)
+    {
+        enemy->shootPauseTimer -= GetFrameTime();
+
+        if (enemy->shootPauseTimer <= 0.0f)
+        {
+            Vector2 shotDirection = { 0 };
+            if (IsEnemyAlignedWithPlayer(enemy, &shotDirection))
+            {
+                Vector2 shotOrigin = enemy->position;
+                shotOrigin.x += shotDirection.x * (enemy->radius + 6.0f);
+                shotOrigin.y += shotDirection.y * (enemy->radius + 6.0f);
+                SpawnBullet(shotOrigin, shotDirection, BLUE_BULLET_SPEED, false);
+            }
+        }
+        return;
+    }
+
+    Vector2 shotDirection = { 0 };
+    if (IsEnemyNearCellCenter(enemy) && IsEnemyAlignedWithPlayer(enemy, &shotDirection))
+    {
+        enemy->direction = shotDirection;
+        enemy->shootPauseTimer = 0.45f;
+        return;
+    }
+
+    float frameSpeed = enemy->speed * GetFrameTime();
+    Vector2 nextPosition = enemy->position;
+    nextPosition.x += enemy->direction.x * frameSpeed;
+    nextPosition.y += enemy->direction.y * frameSpeed;
+
+    if (IsPositionBlocked(nextPosition, enemy->radius))
+    {
+        ChooseBlueEnemyDirection(enemy, true);
+        return;
+    }
+
+    enemy->position = nextPosition;
+
+    if (IsEnemyNearCellCenter(enemy))
+    {
+        ChooseBlueEnemyDirection(enemy, false);
+    }
+}
+
+bool IsEnemyDangerous(Enemy *enemy)
+{
+    if (!enemy->active)
+    {
+        return false;
+    }
+
+    if (enemy->type == ENEMY_BLUE && enemy->knockoutTimer > 0.0f)
+    {
+        return false;
+    }
+
+    return true;
+}
+
 bool DidEnemyTouchPlayer(void)
 {
-    for (int i = 0; i < ENEMY_COUNT; i++)
+    for (int i = 0; i < RED_ENEMY_COUNT; i++)
     {
-        float dx = enemies[i].position.x - player.position.x;
-        float dy = enemies[i].position.y - player.position.y;
+        float dx = redEnemies[i].position.x - player.position.x;
+        float dy = redEnemies[i].position.y - player.position.y;
         float distance = sqrtf((dx * dx) + (dy * dy));
-        float touchDistance = enemies[i].radius + player.radius;
+        float touchDistance = redEnemies[i].radius + player.radius;
+
+        if (distance <= touchDistance)
+        {
+            return true;
+        }
+    }
+
+    for (int i = 0; i < BLUE_ENEMY_COUNT; i++)
+    {
+        if (!IsEnemyDangerous(&blueEnemies[i]))
+        {
+            continue;
+        }
+
+        float dx = blueEnemies[i].position.x - player.position.x;
+        float dy = blueEnemies[i].position.y - player.position.y;
+        float distance = sqrtf((dx * dx) + (dy * dy));
+        float touchDistance = blueEnemies[i].radius + player.radius;
 
         if (distance <= touchDistance)
         {
@@ -561,14 +868,106 @@ bool DidEnemyTouchPlayer(void)
     return false;
 }
 
+void UpdateBullets(void)
+{
+    for (int i = 0; i < MAX_BULLETS; i++)
+    {
+        if (!bullets[i].active)
+        {
+            continue;
+        }
+
+        bullets[i].position.x += bullets[i].direction.x * bullets[i].speed * GetFrameTime();
+        bullets[i].position.y += bullets[i].direction.y * bullets[i].speed * GetFrameTime();
+
+        if (IsPositionBlocked(bullets[i].position, bullets[i].radius))
+        {
+            bullets[i].active = false;
+            continue;
+        }
+
+        if (bullets[i].fromPlayer)
+        {
+            for (int j = 0; j < BLUE_ENEMY_COUNT; j++)
+            {
+                if (!blueEnemies[j].active || blueEnemies[j].knockoutTimer > 0.0f)
+                {
+                    continue;
+                }
+
+                float dx = blueEnemies[j].position.x - bullets[i].position.x;
+                float dy = blueEnemies[j].position.y - bullets[i].position.y;
+                float distance = sqrtf((dx * dx) + (dy * dy));
+
+                if (distance <= blueEnemies[j].radius + bullets[i].radius)
+                {
+                    blueEnemies[j].hitsTaken++;
+                    bullets[i].active = false;
+
+                    if (blueEnemies[j].hitsTaken >= BLUE_HIT_LIMIT)
+                    {
+                        blueEnemies[j].hitsTaken = 0;
+                        blueEnemies[j].knockoutTimer = BLUE_KNOCKOUT_TIME;
+                        blueEnemies[j].shootPauseTimer = 0.0f;
+                    }
+                    break;
+                }
+            }
+        }
+        else
+        {
+            float dx = player.position.x - bullets[i].position.x;
+            float dy = player.position.y - bullets[i].position.y;
+            float distance = sqrtf((dx * dx) + (dy * dy));
+
+            if (distance <= player.radius + bullets[i].radius)
+            {
+                bullets[i].active = false;
+                playerHealth -= BLUE_BULLET_DAMAGE;
+
+                if (playerHealth <= 0)
+                {
+                    playerHealth = 0;
+                    playerAlive = false;
+                }
+            }
+        }
+    }
+}
+
 void ResetGame(void)
 {
     playerAlive = true;
+    playerHealth = PLAYER_MAX_HEALTH;
     flashlightOn = false;
     flashlightBattery = FLASHLIGHT_MAX_BATTERY;
     GenerateMaze();
     InitPlayer();
+    InitBullets();
     InitEnemies();
+}
+
+void DrawPlayerHealthBar(void)
+{
+    Rectangle barBackground = { 20.0f, 126.0f, 220.0f, 18.0f };
+    Rectangle barFill = barBackground;
+    Color healthColor = LIME;
+
+    barFill.width = (barBackground.width * (float)playerHealth) / (float)PLAYER_MAX_HEALTH;
+
+    if (playerHealth <= 30)
+    {
+        healthColor = RED;
+    }
+    else if (playerHealth <= 60)
+    {
+        healthColor = ORANGE;
+    }
+
+    DrawText(TextFormat("Vida: %d/%d", playerHealth, PLAYER_MAX_HEALTH), 20, 106, 16, RAYWHITE);
+    DrawRectangleRounded(barBackground, 0.35f, 10, (Color){ 35, 35, 35, 255 });
+    DrawRectangleRounded(barFill, 0.35f, 10, healthColor);
+    DrawRectangleRoundedLinesEx(barBackground, 0.35f, 10, 2.0f, RAYWHITE);
 }
 
 void DrawGameOverOverlay(void)
@@ -641,18 +1040,70 @@ void DrawEnemies(void)
     float scale = GetMazeScale();
     Vector2 offset = GetMazeOffset(scale);
 
-    for (int i = 0; i < ENEMY_COUNT; i++)
+    for (int i = 0; i < RED_ENEMY_COUNT; i++)
     {
-        if (!enemies[i].active)
+        if (!redEnemies[i].active)
         {
             continue;
         }
 
-        Vector2 center = WorldToScreenPosition(enemies[i].position, scale, offset);
-        float drawRadius = fmaxf(enemies[i].radius * scale, 6.0f);
+        Vector2 center = WorldToScreenPosition(redEnemies[i].position, scale, offset);
+        float drawRadius = fmaxf(redEnemies[i].radius * scale, 6.0f);
         DrawCircleV(center, drawRadius * 2.4f, Fade(RED, 0.10f));
         DrawCircleV(center, drawRadius, RED);
         DrawCircleLines((int)center.x, (int)center.y, drawRadius * 2.4f, RAYWHITE);
+    }
+
+    for (int i = 0; i < BLUE_ENEMY_COUNT; i++)
+    {
+        if (!blueEnemies[i].active)
+        {
+            continue;
+        }
+
+        Vector2 center = WorldToScreenPosition(blueEnemies[i].position, scale, offset);
+        float drawRadius = fmaxf(blueEnemies[i].radius * scale, 7.0f);
+        Color auraColor = Fade(BLUE, 0.10f);
+        Color bodyColor = BLUE;
+
+        if (blueEnemies[i].knockoutTimer > 0.0f)
+        {
+            auraColor = ((int)(blueEnemies[i].knockoutTimer * 8.0f) % 2 == 0) ? Fade(SKYBLUE, 0.18f) : Fade(BLUE, 0.06f);
+            bodyColor = ((int)(blueEnemies[i].knockoutTimer * 8.0f) % 2 == 0) ? SKYBLUE : BLUE;
+        }
+
+        Vector2 top = { center.x, center.y - drawRadius };
+        Vector2 right = { center.x + drawRadius, center.y };
+        Vector2 bottom = { center.x, center.y + drawRadius };
+        Vector2 left = { center.x - drawRadius, center.y };
+
+        DrawCircleV(center, drawRadius * 2.4f, auraColor);
+        DrawCircleLines((int)center.x, (int)center.y, drawRadius * 2.4f, RAYWHITE);
+        DrawTriangle(top, right, bottom, bodyColor);
+        DrawTriangle(top, bottom, left, bodyColor);
+        DrawLineEx(top, right, 2.0f, RAYWHITE);
+        DrawLineEx(right, bottom, 2.0f, RAYWHITE);
+        DrawLineEx(bottom, left, 2.0f, RAYWHITE);
+        DrawLineEx(left, top, 2.0f, RAYWHITE);
+    }
+}
+
+void DrawBullets(void)
+{
+    float scale = GetMazeScale();
+    Vector2 offset = GetMazeOffset(scale);
+
+    for (int i = 0; i < MAX_BULLETS; i++)
+    {
+        if (!bullets[i].active)
+        {
+            continue;
+        }
+
+        Vector2 center = WorldToScreenPosition(bullets[i].position, scale, offset);
+        float drawRadius = fmaxf(bullets[i].radius * scale, 3.0f);
+        Color bulletColor = bullets[i].fromPlayer ? ORANGE : SKYBLUE;
+        DrawCircleV(center, drawRadius, bulletColor);
     }
 }
 
@@ -684,6 +1135,7 @@ int main(int argc, char *argv[])
 
     GenerateMaze();
     InitPlayer();
+    InitBullets();
     InitEnemies();
 
     while (!WindowShouldClose())
@@ -693,11 +1145,17 @@ int main(int argc, char *argv[])
         if (playerAlive)
         {
             UpdatePlayer();
+            UpdatePlayerShooting();
             UpdateFlashlight();
-            for (int i = 0; i < ENEMY_COUNT; i++)
+            for (int i = 0; i < RED_ENEMY_COUNT; i++)
             {
-                UpdateEnemy(&enemies[i]);
+                UpdateRedEnemy(&redEnemies[i]);
             }
+            for (int i = 0; i < BLUE_ENEMY_COUNT; i++)
+            {
+                UpdateBlueEnemy(&blueEnemies[i]);
+            }
+            UpdateBullets();
 
             if (DidEnemyTouchPlayer())
             {
@@ -717,10 +1175,13 @@ int main(int argc, char *argv[])
         DrawVisibilityEffects();
         DrawPlayer();
         DrawEnemies();
+        DrawBullets();
         DrawText("ByteMaze - etapa inicial", 20, 18, 20, GREEN);
         DrawText(TextFormat("Build: %lld bytes (%.2f%% de 1,474,560)", executableSizeBytes, executableUsagePercent), 20, 40, 16, LIGHTGRAY);
         DrawText(TextFormat("Lanterna: %s", flashlightOn ? "ligada" : "desligada"), 20, 62, 16, flashlightOn ? GREEN : GRAY);
         DrawText(TextFormat("Bateria: %.0f%%", flashlightBattery), 20, 84, 16, GREEN);
+        DrawText("Atirar: ESPACO", 20, 106, 16, ORANGE);
+        DrawPlayerHealthBar();
 
         if (!playerAlive)
         {
