@@ -15,6 +15,7 @@
 #define CELL_WALL 0
 #define CELL_PATH 1
 #define CELL_EXIT 2
+#define ENEMY_COUNT 3
 
 int grid[GRID_HEIGTH][GRID_WIDTH];
 long long executableSizeBytes = -1;
@@ -230,7 +231,7 @@ typedef struct Enemy
     bool active;
 } Enemy;
 
-Enemy enemy;
+Enemy enemies[ENEMY_COUNT];
 bool playerAlive = true;
 
 Player player;
@@ -312,37 +313,73 @@ bool DidPlayerReachExit(void)
     return grid[playerCellY][playerCellX] == CELL_EXIT;
 }
 
-Vector2 FindEnemySpawnPosition(void)
+bool IsSpawnCellAvailable(int cellX, int cellY, int enemyIndex)
 {
-    for (int y = GRID_HEIGTH - 2; y >= 1; y--)
+    if (grid[cellY][cellX] != CELL_PATH)
     {
-        for (int x = GRID_WIDTH - 2; x >= 1; x--)
+        return false;
+    }
+
+    for (int i = 0; i < enemyIndex; i++)
+    {
+        int otherCellX = (int)(enemies[i].position.x / TILE_SIZE);
+        int otherCellY = (int)(enemies[i].position.y / TILE_SIZE);
+
+        if (otherCellX == cellX && otherCellY == cellY)
         {
-            if (grid[y][x] == CELL_PATH)
+            return false;
+        }
+    }
+
+    return !(cellX == 1 && cellY == 1);
+}
+
+Vector2 FindEnemySpawnPosition(int enemyIndex)
+{
+    int pathCellsX[GRID_WIDTH * GRID_HEIGTH];
+    int pathCellsY[GRID_WIDTH * GRID_HEIGTH];
+    int pathCount = 0;
+
+    for (int y = 1; y < GRID_HEIGTH - 1; y++)
+    {
+        for (int x = 1; x < GRID_WIDTH - 1; x++)
+        {
+            if (IsSpawnCellAvailable(x, y, enemyIndex))
             {
-                Vector2 spawnPosition = { 0 };
-                spawnPosition.x = ((float)x + 0.5f) * TILE_SIZE;
-                spawnPosition.y = ((float)y + 0.5f) * TILE_SIZE;
-                return spawnPosition;
+                pathCellsX[pathCount] = x;
+                pathCellsY[pathCount] = y;
+                pathCount++;
             }
         }
+    }
+
+    if (pathCount > 0)
+    {
+        int index = (pathCount * (enemyIndex + 1)) / (ENEMY_COUNT + 1);
+        Vector2 spawnPosition = { 0 };
+        spawnPosition.x = ((float)pathCellsX[index] + 0.5f) * TILE_SIZE;
+        spawnPosition.y = ((float)pathCellsY[index] + 0.5f) * TILE_SIZE;
+        return spawnPosition;
     }
 
     return (Vector2){ TILE_SIZE * 1.5f, TILE_SIZE * 1.5f };
 }
 
-void InitEnemy(void)
+void InitEnemies(void)
 {
-    enemy.radius = 8.0f;
-    enemy.speed = 45.0f;
-    enemy.active = true;
-    enemy.position = FindEnemySpawnPosition();
-    enemy.direction = (Vector2){ -1.0f, 0.0f };
+    for (int i = 0; i < ENEMY_COUNT; i++)
+    {
+        enemies[i].radius = 8.0f;
+        enemies[i].speed = 45.0f + (float)(i * 5);
+        enemies[i].active = true;
+        enemies[i].position = FindEnemySpawnPosition(i);
+        enemies[i].direction = (Vector2){ -1.0f, 0.0f };
+    }
 }
 
-int CollectEnemyDirections(Vector2 options[4], bool allowReverse)
+int CollectEnemyDirections(Enemy *enemy, Vector2 options[4], bool allowReverse)
 {
-    Vector2 oppositeDirection = { -enemy.direction.x, -enemy.direction.y };
+    Vector2 oppositeDirection = { -enemy->direction.x, -enemy->direction.y };
     float testDistance = TILE_SIZE * 0.5f;
     int validCount = 0;
     Vector2 directions[4] = {
@@ -354,11 +391,11 @@ int CollectEnemyDirections(Vector2 options[4], bool allowReverse)
 
     for (int i = 0; i < 4; i++)
     {
-        Vector2 testPosition = enemy.position;
+        Vector2 testPosition = enemy->position;
         testPosition.x += directions[i].x * testDistance;
         testPosition.y += directions[i].y * testDistance;
 
-        if (!IsPositionBlocked(testPosition, enemy.radius))
+        if (!IsPositionBlocked(testPosition, enemy->radius))
         {
             if (!allowReverse && directions[i].x == oppositeDirection.x && directions[i].y == oppositeDirection.y)
             {
@@ -373,75 +410,83 @@ int CollectEnemyDirections(Vector2 options[4], bool allowReverse)
     return validCount;
 }
 
-bool IsEnemyNearCellCenter(void)
+bool IsEnemyNearCellCenter(Enemy *enemy)
 {
-    int cellX = (int)(enemy.position.x / TILE_SIZE);
-    int cellY = (int)(enemy.position.y / TILE_SIZE);
+    int cellX = (int)(enemy->position.x / TILE_SIZE);
+    int cellY = (int)(enemy->position.y / TILE_SIZE);
     float centerX = ((float)cellX + 0.5f) * TILE_SIZE;
     float centerY = ((float)cellY + 0.5f) * TILE_SIZE;
     float tolerance = 2.0f;
 
-    return fabsf(enemy.position.x - centerX) <= tolerance && fabsf(enemy.position.y - centerY) <= tolerance;
+    return fabsf(enemy->position.x - centerX) <= tolerance && fabsf(enemy->position.y - centerY) <= tolerance;
 }
 
-void ChooseEnemyDirection(bool allowReverse)
+void ChooseEnemyDirection(Enemy *enemy, bool allowReverse)
 {
     Vector2 validDirections[4];
-    int validCount = CollectEnemyDirections(validDirections, allowReverse);
+    int validCount = CollectEnemyDirections(enemy, validDirections, allowReverse);
 
     if (validCount == 0)
     {
         if (!allowReverse)
         {
-            enemy.direction = (Vector2){ -enemy.direction.x, -enemy.direction.y };
+            enemy->direction = (Vector2){ -enemy->direction.x, -enemy->direction.y };
         }
         return;
     }
 
-    enemy.direction = validDirections[GetRandomValue(0, validCount - 1)];
+    enemy->direction = validDirections[GetRandomValue(0, validCount - 1)];
 }
 
-void UpdateEnemy(void)
+void UpdateEnemy(Enemy *enemy)
 {
-    if (!enemy.active || !playerAlive)
+    if (!enemy->active || !playerAlive)
     {
         return;
     }
 
-    float frameSpeed = enemy.speed * GetFrameTime();
-    Vector2 nextPosition = enemy.position;
+    float frameSpeed = enemy->speed * GetFrameTime();
+    Vector2 nextPosition = enemy->position;
 
-    nextPosition.x += enemy.direction.x * frameSpeed;
-    nextPosition.y += enemy.direction.y * frameSpeed;
+    nextPosition.x += enemy->direction.x * frameSpeed;
+    nextPosition.y += enemy->direction.y * frameSpeed;
 
-    if (IsPositionBlocked(nextPosition, enemy.radius))
+    if (IsPositionBlocked(nextPosition, enemy->radius))
     {
-        ChooseEnemyDirection(true);
+        ChooseEnemyDirection(enemy, true);
         return;
     }
 
-    enemy.position = nextPosition;
+    enemy->position = nextPosition;
 
-    if (IsEnemyNearCellCenter())
+    if (IsEnemyNearCellCenter(enemy))
     {
         Vector2 validDirections[4];
-        int validCount = CollectEnemyDirections(validDirections, false);
+        int validCount = CollectEnemyDirections(enemy, validDirections, false);
 
         if (validCount > 1)
         {
-            ChooseEnemyDirection(false);
+            ChooseEnemyDirection(enemy, false);
         }
     }
 }
 
 bool DidEnemyTouchPlayer(void)
 {
-    float dx = enemy.position.x - player.position.x;
-    float dy = enemy.position.y - player.position.y;
-    float distance = sqrtf((dx * dx) + (dy * dy));
-    float touchDistance = enemy.radius + player.radius;
+    for (int i = 0; i < ENEMY_COUNT; i++)
+    {
+        float dx = enemies[i].position.x - player.position.x;
+        float dy = enemies[i].position.y - player.position.y;
+        float distance = sqrtf((dx * dx) + (dy * dy));
+        float touchDistance = enemies[i].radius + player.radius;
 
-    return distance <= touchDistance;
+        if (distance <= touchDistance)
+        {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 void ResetGame(void)
@@ -449,7 +494,7 @@ void ResetGame(void)
     playerAlive = true;
     GenerateMaze();
     InitPlayer();
-    InitEnemy();
+    InitEnemies();
 }
 
 void DrawGameOverOverlay(void)
@@ -517,19 +562,22 @@ void DrawPlayer(void)
     DrawTriangle(tip, right, left, GOLD);
 }
 
-void DrawEnemy(void)
+void DrawEnemies(void)
 {
-    if (!enemy.active)
-    {
-        return;
-    }
-
     float scale = GetMazeScale();
     Vector2 offset = GetMazeOffset(scale);
-    Vector2 center = WorldToScreenPosition(enemy.position, scale, offset);
-    float drawRadius = fmaxf(enemy.radius * scale, 6.0f);
 
-    DrawCircleV(center, drawRadius, RED);
+    for (int i = 0; i < ENEMY_COUNT; i++)
+    {
+        if (!enemies[i].active)
+        {
+            continue;
+        }
+
+        Vector2 center = WorldToScreenPosition(enemies[i].position, scale, offset);
+        float drawRadius = fmaxf(enemies[i].radius * scale, 6.0f);
+        DrawCircleV(center, drawRadius, RED);
+    }
 }
 
 int main(int argc, char *argv[])
@@ -544,14 +592,19 @@ int main(int argc, char *argv[])
 
     GenerateMaze();
     InitPlayer();
-    InitEnemy();
+    InitEnemies();
 
     while (!WindowShouldClose())
     {
+        UpdateBuildMetrics(argv[0]);
+
         if (playerAlive)
         {
             UpdatePlayer();
-            UpdateEnemy();
+            for (int i = 0; i < ENEMY_COUNT; i++)
+            {
+                UpdateEnemy(&enemies[i]);
+            }
 
             if (DidEnemyTouchPlayer())
             {
@@ -569,7 +622,7 @@ int main(int argc, char *argv[])
 
         DrawMazeGrid();
         DrawPlayer();
-        DrawEnemy();
+        DrawEnemies();
         DrawText("ByteMaze - etapa inicial", 20, 18, 20, GREEN);
         DrawText(TextFormat("Build: %lld bytes (%.2f%% de 1,474,560)", executableSizeBytes, executableUsagePercent), 20, 40, 16, LIGHTGRAY);
 
