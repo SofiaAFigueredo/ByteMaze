@@ -16,10 +16,13 @@
 #define CELL_PATH 1
 #define CELL_EXIT 2
 #define ENEMY_COUNT 3
+#define FLASHLIGHT_MAX_BATTERY 100.0f
 
 int grid[GRID_HEIGTH][GRID_WIDTH];
 long long executableSizeBytes = -1;
 float executableUsagePercent = 0.0f;
+bool flashlightOn = false;
+float flashlightBattery = FLASHLIGHT_MAX_BATTERY;
 
 float GetMazeScale(void)
 {
@@ -182,38 +185,6 @@ void GenerateMaze(void)
     grid[1][GRID_WIDTH - 2] = CELL_EXIT;
 }
 
-void DrawMazeGrid(void)
-{
-    float scale = GetMazeScale();
-    float drawTileSize = (float)TILE_SIZE * scale;
-    Vector2 offset = GetMazeOffset(scale);
-
-    for (int y = 0; y < GRID_HEIGTH; y++)
-    {
-        for (int x = 0; x < GRID_WIDTH; x++)
-        {
-            Color cellColor = BLACK;
-
-            if (grid[y][x] == CELL_WALL)
-            {
-                cellColor = DARKGRAY;
-            }
-            else if (grid[y][x] == CELL_PATH)
-            {
-                cellColor = RAYWHITE;
-            }
-            else if (grid[y][x] == CELL_EXIT)
-            {
-                cellColor = GREEN;
-            }
-
-            Vector2 position = { offset.x + ((float)x * drawTileSize), offset.y + ((float)y * drawTileSize) };
-            Vector2 size = { drawTileSize, drawTileSize };
-            DrawRectangleV(position, size, cellColor);
-        }
-    }
-}
-
 typedef struct Player
 {
     Vector2 position;
@@ -235,6 +206,81 @@ Enemy enemies[ENEMY_COUNT];
 bool playerAlive = true;
 
 Player player;
+
+float GetDistanceBetweenPoints(Vector2 a, Vector2 b)
+{
+    float dx = a.x - b.x;
+    float dy = a.y - b.y;
+    return sqrtf((dx * dx) + (dy * dy));
+}
+
+Vector2 GetFlashlightCenter(void)
+{
+    Vector2 flashlightCenter = player.position;
+    flashlightCenter.x += cosf(player.facingAngle) * (TILE_SIZE * 2.4f);
+    flashlightCenter.y += sinf(player.facingAngle) * (TILE_SIZE * 2.4f);
+    return flashlightCenter;
+}
+
+bool IsWorldPositionVisible(Vector2 position)
+{
+    if (GetDistanceBetweenPoints(position, player.position) <= TILE_SIZE * 2.6f)
+    {
+        return true;
+    }
+
+    if (flashlightOn)
+    {
+        Vector2 flashlightCenter = GetFlashlightCenter();
+        if (GetDistanceBetweenPoints(position, flashlightCenter) <= TILE_SIZE * 3.1f)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void DrawMazeGrid(void)
+{
+    float scale = GetMazeScale();
+    float drawTileSize = (float)TILE_SIZE * scale;
+    Vector2 offset = GetMazeOffset(scale);
+
+    for (int y = 0; y < GRID_HEIGTH; y++)
+    {
+        for (int x = 0; x < GRID_WIDTH; x++)
+        {
+            Color cellColor = BLACK;
+            Vector2 cellCenter = {
+                ((float)x + 0.5f) * TILE_SIZE,
+                ((float)y + 0.5f) * TILE_SIZE
+            };
+
+            if (grid[y][x] == CELL_WALL)
+            {
+                cellColor = DARKGRAY;
+            }
+            else if (grid[y][x] == CELL_PATH)
+            {
+                cellColor = RAYWHITE;
+            }
+            else if (grid[y][x] == CELL_EXIT)
+            {
+                cellColor = GREEN;
+            }
+
+            if (!IsWorldPositionVisible(cellCenter))
+            {
+                cellColor = (Color){ 6, 6, 6, 255 };
+            }
+
+            Vector2 position = { offset.x + ((float)x * drawTileSize), offset.y + ((float)y * drawTileSize) };
+            Vector2 size = { drawTileSize, drawTileSize };
+            DrawRectangleV(position, size, cellColor);
+        }
+    }
+}
 
 bool IsWallCell(int x, int y)
 {
@@ -301,6 +347,32 @@ void UpdatePlayer(void)
         if (!IsPositionBlocked(nextPosition, player.radius))
         {
             player.position.y = nextPosition.y;
+        }
+    }
+}
+
+void UpdateFlashlight(void)
+{
+    if (IsKeyPressed(KEY_C))
+    {
+        if (flashlightOn)
+        {
+            flashlightOn = false;
+        }
+        else if (flashlightBattery > 0.0f)
+        {
+            flashlightOn = true;
+        }
+    }
+
+    if (flashlightOn)
+    {
+        flashlightBattery -= GetFrameTime();
+
+        if (flashlightBattery <= 0.0f)
+        {
+            flashlightBattery = 0.0f;
+            flashlightOn = false;
         }
     }
 }
@@ -492,6 +564,8 @@ bool DidEnemyTouchPlayer(void)
 void ResetGame(void)
 {
     playerAlive = true;
+    flashlightOn = false;
+    flashlightBattery = FLASHLIGHT_MAX_BATTERY;
     GenerateMaze();
     InitPlayer();
     InitEnemies();
@@ -576,7 +650,25 @@ void DrawEnemies(void)
 
         Vector2 center = WorldToScreenPosition(enemies[i].position, scale, offset);
         float drawRadius = fmaxf(enemies[i].radius * scale, 6.0f);
+        DrawCircleV(center, drawRadius * 2.4f, Fade(RED, 0.10f));
         DrawCircleV(center, drawRadius, RED);
+        DrawCircleLines((int)center.x, (int)center.y, drawRadius * 2.4f, RAYWHITE);
+    }
+}
+
+void DrawVisibilityEffects(void)
+{
+    float scale = GetMazeScale();
+    Vector2 offset = GetMazeOffset(scale);
+    Vector2 playerCenter = WorldToScreenPosition(player.position, scale, offset);
+    float playerAuraRadius = TILE_SIZE * scale * 2.6f;
+
+    DrawCircleV(playerCenter, playerAuraRadius, Fade(GOLD, 0.08f));
+
+    if (flashlightOn)
+    {
+        Vector2 flashlightCenter = WorldToScreenPosition(GetFlashlightCenter(), scale, offset);
+        DrawCircleV(flashlightCenter, TILE_SIZE * scale * 3.1f, Fade(GREEN, 0.07f));
     }
 }
 
@@ -601,6 +693,7 @@ int main(int argc, char *argv[])
         if (playerAlive)
         {
             UpdatePlayer();
+            UpdateFlashlight();
             for (int i = 0; i < ENEMY_COUNT; i++)
             {
                 UpdateEnemy(&enemies[i]);
@@ -621,10 +714,13 @@ int main(int argc, char *argv[])
         ClearBackground(BLACK);
 
         DrawMazeGrid();
+        DrawVisibilityEffects();
         DrawPlayer();
         DrawEnemies();
         DrawText("ByteMaze - etapa inicial", 20, 18, 20, GREEN);
         DrawText(TextFormat("Build: %lld bytes (%.2f%% de 1,474,560)", executableSizeBytes, executableUsagePercent), 20, 40, 16, LIGHTGRAY);
+        DrawText(TextFormat("Lanterna: %s", flashlightOn ? "ligada" : "desligada"), 20, 62, 16, flashlightOn ? GREEN : GRAY);
+        DrawText(TextFormat("Bateria: %.0f%%", flashlightBattery), 20, 84, 16, GREEN);
 
         if (!playerAlive)
         {
