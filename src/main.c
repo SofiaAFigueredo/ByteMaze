@@ -26,13 +26,26 @@
 #define BULLET_RADIUS 4.0f
 #define RED_HIT_LIMIT 5
 #define BLUE_HIT_LIMIT 5
-#define BLUE_KNOCKOUT_TIME 5.0f
+#define ENEMY_KNOCKOUT_TIME 5.0f
 #define BOSS_HIT_LIMIT 5
-#define BOSS_KNOCKOUT_TIME 3.0f
 #define PLAYER_MAX_HEALTH 100
-#define PLAYER_MAX_AMMO 20
+#define PLAYER_MAX_AMMO 15
 #define PLAYER_RELOAD_TIME 1.5f
 #define BLUE_BULLET_DAMAGE 10
+#define ENEMY_TOUCH_DAMAGE 25
+#define PLAYER_DAMAGE_COOLDOWN 1.0f
+#define PLAYER_CROWD_RADIUS (TILE_SIZE * 2.75f)
+#define PLAYER_MAX_NEAR_ENEMIES 2
+#define MUSIC_BASE_VOLUME 0.12f
+#define MUSIC_NEAR_ENEMY_VOLUME 0.45f
+#define MUSIC_NEAR_ENEMY_DISTANCE (TILE_SIZE * 8.0f)
+#define PLAYER_SHOT_VOLUME 0.7f
+#define ENEMY_SHOT_VOLUME 0.65f
+#define PLAYER_RELOAD_VOLUME 0.75f
+#define VICTORY_VOLUME 0.8f
+#define GAME_OVER_VOLUME 0.8f
+#define UI_FONT_PATH "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
+#define UI_FONT_SIZE 28
 #define BOSS_FAR_DISTANCE_THRESHOLD (TILE_SIZE * 10.0f)
 #define BOSS_FAR_SPEED_MULTIPLIER 1.8f
 
@@ -44,6 +57,7 @@ float flashlightBattery = FLASHLIGHT_MAX_BATTERY;
 int playerHealth = PLAYER_MAX_HEALTH;
 int playerAmmo = PLAYER_MAX_AMMO;
 float playerReloadTimer = 0.0f;
+float playerDamageCooldown = 0.0f;
 
 Color HUD_PANEL_COLOR = { 10, 10, 10, 220 };
 Color HUD_BORDER_COLOR = { 0, 255, 70, 255 };
@@ -256,6 +270,15 @@ Enemy blueEnemies[BLUE_ENEMY_COUNT];
 Enemy bossEnemy;
 Bullet bullets[MAX_BULLETS];
 bool playerAlive = true;
+Music backgroundMusic;
+Sound playerShotSound;
+Sound enemyShotSound;
+Sound playerReloadSound;
+Sound victorySound;
+Sound gameOverSound;
+bool gameAudioLoaded = false;
+Font uiFont;
+bool uiFontLoaded = false;
 
 Player player;
 
@@ -265,6 +288,39 @@ typedef enum GamePhase
     PHASE_INFO,
     PHASE_PLAYING
 } GamePhase;
+
+typedef enum Language
+{
+    LANGUAGE_PT_BR,
+    LANGUAGE_EN,
+    LANGUAGE_KO,
+    LANGUAGE_COUNT
+} Language;
+
+typedef enum TextId
+{
+    TEXT_LANGUAGE_NAME,
+    TEXT_LANGUAGE_HINT,
+    TEXT_BEST_ROUND,
+    TEXT_TUTORIAL_PROGRESS,
+    TEXT_ROUND_PROGRESS,
+    TEXT_HEALTH,
+    TEXT_SHOOT,
+    TEXT_AMMO,
+    TEXT_RELOADING,
+    TEXT_RELOAD,
+    TEXT_FLASHLIGHT_CONTROL,
+    TEXT_FLASHLIGHT_STATE,
+    TEXT_FLASHLIGHT_ON,
+    TEXT_FLASHLIGHT_OFF,
+    TEXT_BATTERY,
+    TEXT_GAME_OVER,
+    TEXT_PLAY_AGAIN,
+    TEXT_SKIP_TUTORIAL,
+    TEXT_INTRO_FOOTER,
+    TEXT_ROUND_FOOTER,
+    TEXT_COUNT
+} TextId;
 
 typedef struct RoundConfig
 {
@@ -276,6 +332,7 @@ typedef struct RoundConfig
 
 GamePhase gamePhase = PHASE_INTRO;
 RoundConfig currentRoundConfig = { true, false, false, false };
+Language currentLanguage = LANGUAGE_PT_BR;
 bool inTutorialSequence = true;
 int tutorialRound = 1;
 int officialRound = 1;
@@ -283,12 +340,195 @@ int bestOfficialRound = 1;
 bool roundNeedsSetup = true;
 
 void SpawnBullet(Vector2 position, Vector2 direction, float speed, bool fromPlayer);
+int GetDifficultyRampLevel(void);
+float GetRedEnemyTrackDistance(void);
+float GetBlueEnemyPathfindChance(void);
+float GetEnemySpeedBonus(void);
+float GetBossSpeedBonus(void);
+float GetBossShootCooldown(void);
+float GetBossFarSpeedMultiplier(void);
+void InitGameAudio(void);
+void UpdateGameAudio(void);
+void ShutdownGameAudio(void);
+void InitUIFont(void);
+void ShutdownUIFont(void);
+
+const char *uiText[LANGUAGE_COUNT][TEXT_COUNT] = {
+    [LANGUAGE_PT_BR] = {
+        [TEXT_LANGUAGE_NAME] = "PT-BR",
+        [TEXT_LANGUAGE_HINT] = "Idioma: PT-BR  |  L muda idioma",
+        [TEXT_BEST_ROUND] = "Recorde pessoal: round %d",
+        [TEXT_TUTORIAL_PROGRESS] = "Tutorial %d/4",
+        [TEXT_ROUND_PROGRESS] = "Round %d",
+        [TEXT_HEALTH] = "Vida: %d/%d",
+        [TEXT_SHOOT] = "Atirar: ESPACO",
+        [TEXT_AMMO] = "Balas: %d/%d",
+        [TEXT_RELOADING] = "Recarregando: %.1fs",
+        [TEXT_RELOAD] = "Recarregar: R",
+        [TEXT_FLASHLIGHT_CONTROL] = "Lanterna: C",
+        [TEXT_FLASHLIGHT_STATE] = "Lanterna: %s",
+        [TEXT_FLASHLIGHT_ON] = "ligada",
+        [TEXT_FLASHLIGHT_OFF] = "desligada",
+        [TEXT_BATTERY] = "Bateria: %.0f%%",
+        [TEXT_GAME_OVER] = "VOCE MORREU",
+        [TEXT_PLAY_AGAIN] = "JOGAR DE NOVO",
+        [TEXT_SKIP_TUTORIAL] = "Pular tutorial",
+        [TEXT_INTRO_FOOTER] = "Qualquer tecla ou clique inicia. L muda idioma.",
+        [TEXT_ROUND_FOOTER] = "Qualquer tecla ou clique comeca. L muda idioma."
+    },
+    [LANGUAGE_EN] = {
+        [TEXT_LANGUAGE_NAME] = "EN",
+        [TEXT_LANGUAGE_HINT] = "Language: EN  |  L changes language",
+        [TEXT_BEST_ROUND] = "Personal best: round %d",
+        [TEXT_TUTORIAL_PROGRESS] = "Tutorial %d/4",
+        [TEXT_ROUND_PROGRESS] = "Round %d",
+        [TEXT_HEALTH] = "Health: %d/%d",
+        [TEXT_SHOOT] = "Shoot: SPACE",
+        [TEXT_AMMO] = "Ammo: %d/%d",
+        [TEXT_RELOADING] = "Reloading: %.1fs",
+        [TEXT_RELOAD] = "Reload: R",
+        [TEXT_FLASHLIGHT_CONTROL] = "Flashlight: C",
+        [TEXT_FLASHLIGHT_STATE] = "Flashlight: %s",
+        [TEXT_FLASHLIGHT_ON] = "on",
+        [TEXT_FLASHLIGHT_OFF] = "off",
+        [TEXT_BATTERY] = "Battery: %.0f%%",
+        [TEXT_GAME_OVER] = "YOU DIED",
+        [TEXT_PLAY_AGAIN] = "PLAY AGAIN",
+        [TEXT_SKIP_TUTORIAL] = "Skip tutorial",
+        [TEXT_INTRO_FOOTER] = "Any key or click starts. L changes language.",
+        [TEXT_ROUND_FOOTER] = "Any key or click starts. L changes language."
+    },
+    [LANGUAGE_KO] = {
+        [TEXT_LANGUAGE_NAME] = "KO",
+        [TEXT_LANGUAGE_HINT] = "언어: 한국어  |  L: 언어 변경",
+        [TEXT_BEST_ROUND] = "최고 기록: 라운드 %d",
+        [TEXT_TUTORIAL_PROGRESS] = "튜토리얼 %d/4",
+        [TEXT_ROUND_PROGRESS] = "라운드 %d",
+        [TEXT_HEALTH] = "체력: %d/%d",
+        [TEXT_SHOOT] = "발사: 스페이스",
+        [TEXT_AMMO] = "탄약: %d/%d",
+        [TEXT_RELOADING] = "재장전 중: %.1f초",
+        [TEXT_RELOAD] = "재장전: R",
+        [TEXT_FLASHLIGHT_CONTROL] = "손전등: C",
+        [TEXT_FLASHLIGHT_STATE] = "손전등: %s",
+        [TEXT_FLASHLIGHT_ON] = "켜짐",
+        [TEXT_FLASHLIGHT_OFF] = "꺼짐",
+        [TEXT_BATTERY] = "배터리: %.0f%%",
+        [TEXT_GAME_OVER] = "사망했습니다",
+        [TEXT_PLAY_AGAIN] = "다시 시작",
+        [TEXT_SKIP_TUTORIAL] = "튜토리얼 건너뛰기",
+        [TEXT_INTRO_FOOTER] = "아무 키나 클릭으로 시작. L: 언어 변경.",
+        [TEXT_ROUND_FOOTER] = "아무 키나 클릭으로 시작. L: 언어 변경."
+    }
+};
+
+const char koreanGlyphText[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,;:!?%-/|()"
+    "언어한국어변경최고기록라운드튜토리얼체력발사스페이스탄약재장전중초손전등켜짐꺼짐배터리"
+    "사망했습니다다시시작건너뛰기아무키나누르거나클릭해서을하세요"
+    "목표는초록출구까지가는것입니다노란삼각형조종하고벽에막히지않게길을찾으세요"
+    "빨간원닿으면체력이깎입니다적은가까이오면음악이커집니다분홍마름모총을쏩니다"
+    "직선통로에서멈추면위험합니다총알발로번맞히면간녹다운됩니다"
+    "손전등어두운곳밝히지만배터리를소모합니다튜토리얼언제나퍼센트공식전첫번째"
+    "이후오마다충전됩니다보스보라색사각형플레이어추적하고멀어지면빨라지며사격합니다"
+    "두명넘게둘러싸지않도록움직입니다"
+    "목표노란삼각형을초록출구까지이동하세요또는방향키로움직입니다로쏘세요"
+    "적에게닿으면체력이감소하고총알은적을동안기절시킵니다게임의규칙을단계별로알려줍니다"
+    "빨간적은미로를순찰하고가까우면추격합니다즉시죽지않고감소합니다플레이어체력은이고피해후잠시무적입니다"
+    "통로에서멈추지말고초록출구로이동하세요분홍적은총을쏘는적입니다같은행이나열에서벽없이마주치면멈추고발사합니다"
+    "적은번맞으면동안기절합니다탄약은발이고로재장전합니다사용할수있습니다켜고끕니다더넓게보이지만배터리를소모합니다"
+    "튜토리얼라운드는항상배터리퍼센트로시작합니다모퉁이와출구를확인할때짧게사용하세요"
+    "보라색사각형은보스입니다찾아오고일직선이면쏘며멀어지면빨라집니다보스도번맞으면동안기절합니다"
+    "게임은두명넘는적이동시에플레이어를막지않게조정합니다공식게임이시작됩니다"
+    "라운드과에는빨간순찰적과분홍사격적이나옵니다체력탄약발로시작하고배터리는이후라운드에대비합니다"
+    "도착하면다음라운드로갑니다손전등라운드가시작됩니다제한된시야가있습니다매라운드충전되지않으니아껴쓰세요"
+    "라운드부터마다충전됩니다이번라운드는보라색보스하나에집중합니다계속움직이고보스가쏠때일직선을피하고맞혀기절시키세요"
+    "함께나옵니다보스는직접추적하고빨간적은주변길을압박합니다총으로공간을만들고막히지않게움직이세요"
+    "손전등어둠을제외한모든적이나옵니다추격하고쏘고멀면빨라집니다음악이커지면가까운위험이있다는뜻입니다"
+    "부터는빨간적분홍적보스손전등이모두활성화됩니다처럼마다만충전됩니다끄기전에이동경로를확인하세요"
+    "이제난이도상승이시작됩니다올라갈수록적이더빠르고더자주길을계산합니다타이밍관리가중요합니다"
+    "미로를지나도착하세요가능할때변경계속움직이고기절시간을이용해길을여세요"
+    "바꿉클릭으로";
+
+const char *T(TextId id)
+{
+    return uiText[currentLanguage][id];
+}
+
+Font GetUIFont(void)
+{
+    return uiFontLoaded ? uiFont : GetFontDefault();
+}
+
+void InitUIFont(void)
+{
+    int codepointCount = 0;
+    int *codepoints = LoadCodepoints(koreanGlyphText, &codepointCount);
+
+    uiFont = LoadFontEx(UI_FONT_PATH, UI_FONT_SIZE, codepoints, codepointCount);
+    UnloadCodepoints(codepoints);
+    uiFontLoaded = uiFont.texture.id > 0;
+}
+
+void ShutdownUIFont(void)
+{
+    if (uiFontLoaded)
+    {
+        UnloadFont(uiFont);
+        uiFontLoaded = false;
+    }
+}
 
 float GetDistanceBetweenPoints(Vector2 a, Vector2 b)
 {
     float dx = a.x - b.x;
     float dy = a.y - b.y;
     return sqrtf((dx * dx) + (dy * dy));
+}
+
+int GetDifficultyRampLevel(void)
+{
+    if (inTutorialSequence || officialRound < 15)
+    {
+        return 0;
+    }
+
+    return officialRound - 14;
+}
+
+float GetRedEnemyTrackDistance(void)
+{
+    return TILE_SIZE * (5.5f + fminf((float)GetDifficultyRampLevel() * 0.45f, 4.5f));
+}
+
+float GetBlueEnemyPathfindChance(void)
+{
+    if (GetDifficultyRampLevel() <= 0)
+    {
+        return 0.0f;
+    }
+
+    return fminf(0.20f + ((float)GetDifficultyRampLevel() - 1.0f) * 0.08f, 0.85f);
+}
+
+float GetEnemySpeedBonus(void)
+{
+    return (float)GetDifficultyRampLevel() * 1.4f;
+}
+
+float GetBossSpeedBonus(void)
+{
+    return (float)GetDifficultyRampLevel() * 1.8f;
+}
+
+float GetBossShootCooldown(void)
+{
+    return fmaxf(0.45f, 0.85f - ((float)GetDifficultyRampLevel() * 0.025f));
+}
+
+float GetBossFarSpeedMultiplier(void)
+{
+    return fminf(BOSS_FAR_SPEED_MULTIPLIER + ((float)GetDifficultyRampLevel() * 0.04f), 2.4f);
 }
 
 Vector2 GetFlashlightCenter(void)
@@ -325,15 +565,19 @@ bool IsWorldPositionVisible(Vector2 position)
 
 void DrawTextStrong(const char *text, int x, int y, int fontSize, Color color, Color shadowColor)
 {
-    DrawText(text, x + 2, y + 2, fontSize, shadowColor);
-    DrawText(text, x, y, fontSize, color);
+    Font font = GetUIFont();
+    Vector2 shadowPos = { (float)(x + 2), (float)(y + 2) };
+    Vector2 textPos = { (float)x, (float)y };
+
+    DrawTextEx(font, text, shadowPos, (float)fontSize, 1.0f, shadowColor);
+    DrawTextEx(font, text, textPos, (float)fontSize, 1.0f, color);
 }
 
 /* Same as DrawTextStrong, but lets the caller control the space between
  * letters. Used where legibility matters most (tutorial explanations). */
 void DrawTextStrongSpaced(const char *text, int x, int y, int fontSize, float spacing, Color color, Color shadowColor)
 {
-    Font font = GetFontDefault();
+    Font font = GetUIFont();
     Vector2 shadowPos = { (float)(x + 2), (float)(y + 2) };
     Vector2 textPos = { (float)x, (float)y };
 
@@ -345,7 +589,7 @@ void DrawTextStrongSpaced(const char *text, int x, int y, int fontSize, float sp
  * size themselves around it instead of guessing a fixed height. */
 Vector2 MeasureTextStrongSpaced(const char *text, int fontSize, float spacing)
 {
-    Font font = GetFontDefault();
+    Font font = GetUIFont();
     return MeasureTextEx(font, text, (float)fontSize, spacing);
 }
 
@@ -543,6 +787,10 @@ void UpdatePlayerReload(void)
     if (IsKeyPressed(KEY_R) && playerAmmo < PLAYER_MAX_AMMO)
     {
         playerReloadTimer = PLAYER_RELOAD_TIME;
+        if (gameAudioLoaded)
+        {
+            PlaySound(playerReloadSound);
+        }
     }
 }
 
@@ -768,6 +1016,10 @@ void SpawnBullet(Vector2 position, Vector2 direction, float speed, bool fromPlay
             bullets[i].speed = speed;
             bullets[i].radius = BULLET_RADIUS;
             bullets[i].fromPlayer = fromPlayer;
+            if (gameAudioLoaded)
+            {
+                PlaySound(fromPlayer ? playerShotSound : enemyShotSound);
+            }
             break;
         }
     }
@@ -783,7 +1035,7 @@ void InitEnemies(void)
     for (int i = 0; i < RED_ENEMY_COUNT; i++)
     {
         redEnemies[i].radius = 8.0f;
-        redEnemies[i].speed = 34.0f + (float)(i * 4);
+        redEnemies[i].speed = 34.0f + (float)(i * 4) + GetEnemySpeedBonus();
         redEnemies[i].active = true;
         redEnemies[i].type = ENEMY_RED;
         redEnemies[i].hitsTaken = 0;
@@ -797,7 +1049,7 @@ void InitEnemies(void)
     for (int i = 0; i < BLUE_ENEMY_COUNT; i++)
     {
         blueEnemies[i].radius = 9.0f;
-        blueEnemies[i].speed = 42.0f + (float)(i * 4);
+        blueEnemies[i].speed = 42.0f + (float)(i * 4) + GetEnemySpeedBonus();
         blueEnemies[i].active = true;
         blueEnemies[i].type = ENEMY_BLUE;
         blueEnemies[i].hitsTaken = 0;
@@ -823,7 +1075,7 @@ void InitEnemies(void)
 void InitBossEnemy(void)
 {
     bossEnemy.radius = 10.0f;
-    bossEnemy.speed = 42.0f;
+    bossEnemy.speed = 42.0f + GetBossSpeedBonus();
     bossEnemy.active = true;
     bossEnemy.type = ENEMY_BOSS;
     bossEnemy.hitsTaken = 0;
@@ -843,14 +1095,11 @@ RoundConfig GetTutorialRoundConfig(int round)
 
 RoundConfig GetOfficialRoundConfig(int round)
 {
-    if (round >= 20) return (RoundConfig){ true, true, true, true };
-    if (round == 15) return (RoundConfig){ true, true, true, false };
-    if (round == 10) return (RoundConfig){ true, false, true, false };
+    if (round >= 10) return (RoundConfig){ true, true, true, true };
+    if (round >= 8) return (RoundConfig){ true, true, true, false };
+    if (round >= 6) return (RoundConfig){ true, false, true, false };
     if (round == 5) return (RoundConfig){ false, false, true, false };
-    if ((round >= 16 && round <= 19) ||
-        (round >= 11 && round <= 14) ||
-        (round >= 6 && round <= 9) ||
-        (round >= 3 && round <= 4))
+    if (round >= 3 && round <= 4)
     {
         return (RoundConfig){ true, true, false, true };
     }
@@ -886,12 +1135,12 @@ void ApplyRoundConfig(void)
     playerAmmo = PLAYER_MAX_AMMO;
     playerReloadTimer = 0.0f;
 
-    if (inTutorialSequence && tutorialRound == 3)
+    if (inTutorialSequence)
     {
         flashlightBattery = FLASHLIGHT_MAX_BATTERY;
     }
 
-    if (!inTutorialSequence && currentRoundConfig.flashlightEnabled)
+    if (!inTutorialSequence && (officialRound == 1 || officialRound % 5 == 0))
     {
         flashlightBattery = FLASHLIGHT_MAX_BATTERY;
     }
@@ -901,6 +1150,7 @@ void SetupRound(void)
 {
     playerAlive = true;
     playerHealth = PLAYER_MAX_HEALTH;
+    playerDamageCooldown = 0.0f;
     GenerateMaze();
     InitPlayer();
     InitBullets();
@@ -917,19 +1167,38 @@ const char *GetIntroTitle(void)
 
 const char *GetIntroBody(void)
 {
-    return "Chegue na saida verde para vencer.\nDesvie dos inimigos e use ESPACO para atirar e R para recarregar.\nA cada novo tipo de round, o jogo explica a regra.";
+    if (currentLanguage == LANGUAGE_EN)
+    {
+        return "Goal: guide the yellow triangle to the green exit.\n"
+               "Move with WASD or arrow keys.\n"
+               "Shoot with SPACE, reload with R, change language with L.\n"
+               "Enemies remove health, shots can knock them out for 5 seconds.\n"
+               "Each tutorial step introduces one part of the game.";
+    }
+    if (currentLanguage == LANGUAGE_KO)
+    {
+        return "목표: 노란 삼각형을 초록 출구까지 이동하세요.\n"
+               "WASD 또는 방향키로 움직입니다.\n"
+               "스페이스로 발사, R로 재장전, L로 언어를 바꿉니다.\n"
+               "적에게 닿으면 체력이 감소하고, 총알은 적을 5초 동안 기절시킵니다.\n"
+               "튜토리얼은 게임의 규칙을 단계별로 알려줍니다.";
+    }
+    return "Objetivo: leve o triangulo amarelo ate a saida verde.\n"
+           "Mova com WASD ou setas.\n"
+           "Atire com ESPACO, recarregue com R e mude idioma com L.\n"
+           "Inimigos tiram vida; tiros podem nocautea-los por 5 segundos.\n"
+           "Cada tutorial apresenta uma parte do jogo.";
 }
 
 const char *GetRoundInfoTitle(void)
 {
     if (inTutorialSequence)
     {
-        if (tutorialRound == 1) return "TUTORIAL 1";
-        if (tutorialRound == 2) return "TUTORIAL 2";
-        if (tutorialRound == 3) return "TUTORIAL 3";
-        return "TUTORIAL 4";
+        if (currentLanguage == LANGUAGE_KO) return TextFormat("튜토리얼 %d", tutorialRound);
+        return TextFormat("TUTORIAL %d", tutorialRound);
     }
 
+    if (currentLanguage == LANGUAGE_KO) return TextFormat("라운드 %d", officialRound);
     return TextFormat("ROUND %d", officialRound);
 }
 
@@ -937,22 +1206,58 @@ const char *GetRoundInfoBody(void)
 {
     if (inTutorialSequence)
     {
-        if (tutorialRound == 1) return "Neste round voce enfrenta apenas os\ninimigos vermelhos.\nSe um deles tocar em voce, a partida\nacaba na hora.\nUse WASD ou as setas para se mover\ne alcance a saida verde.";
-        if (tutorialRound == 2) return "Agora o inimigo rosa entrou na partida.\nEle aparece perto da saida e vai\npressionar voce logo no comeco.\nSao 5 tiros para nocautea-lo.\nSua arma carrega 5 balas.\nAtire com ESPACO e recarregue com R.";
-        if (tutorialRound == 3) return "A lanterna foi liberada.\nPressione C para ligar ou desligar.\nEla amplia bastante sua visao,\nmas consome bateria enquanto estiver ativa.\nCada round comeca com 100%% de carga.\nVermelho e rosa continuam presentes.";
-        return "Agora e a vez do chefao roxo.\nEle persegue voce com mais precisao,\natira enquanto se move\ne acelera muito se ficar longe.\nAssim como o rosa, ele pode ser\nnocauteado por alguns segundos.";
+        if (currentLanguage == LANGUAGE_EN)
+        {
+            if (tutorialRound == 1) return "Red enemies patrol the maze and chase when close.\nTouching one deals 25 damage, not instant death.\nYou have 100 health and brief invulnerability after damage.\nDo not stand still in corridors; keep moving toward the green exit.";
+            if (tutorialRound == 2) return "Pink enemies are shooters.\nIf they line up with you in a clear row or column, they stop and fire.\nUse SPACE to shoot. Five hits knock any enemy out for 5 seconds.\nYour weapon has 15 shots; press R to reload.";
+            if (tutorialRound == 3) return "The flashlight is available.\nPress C to toggle it. It reveals more of the maze but spends battery.\nTutorial rounds always start with 100 percent battery.\nUse it in short bursts to check corners and find the exit.";
+            return "The purple boss is the square enemy.\nIt pathfinds toward you, shoots when aligned, and speeds up if far away.\nIt can also be knocked out for 5 seconds after five hits.\nThe game limits crowding so more than two enemies should not trap you at once.";
+        }
+        if (currentLanguage == LANGUAGE_KO)
+        {
+            if (tutorialRound == 1) return "빨간 적은 미로를 순찰하고 가까우면 추격합니다.\n닿으면 즉시 죽지 않고 체력이 25 감소합니다.\n플레이어 체력은 100이고 피해 후 잠시 무적입니다.\n통로에서 멈추지 말고 초록 출구로 이동하세요.";
+            if (tutorialRound == 2) return "분홍 적은 총을 쏘는 적입니다.\n같은 행이나 열에서 벽 없이 마주치면 멈추고 발사합니다.\n스페이스로 쏘세요. 적은 5번 맞으면 5초 동안 기절합니다.\n탄약은 15발이고 R로 재장전합니다.";
+            if (tutorialRound == 3) return "손전등을 사용할 수 있습니다.\nC로 켜고 끕니다. 더 넓게 보이지만 배터리를 소모합니다.\n튜토리얼 라운드는 항상 배터리 100퍼센트로 시작합니다.\n모퉁이와 출구를 확인할 때 짧게 사용하세요.";
+            return "보라색 사각형은 보스입니다.\n플레이어를 찾아오고, 일직선이면 쏘며, 멀어지면 빨라집니다.\n보스도 5번 맞으면 5초 동안 기절합니다.\n게임은 두 명 넘는 적이 동시에 플레이어를 막지 않게 조정합니다.";
+        }
+
+        if (tutorialRound == 1) return "Inimigos vermelhos patrulham o labirinto e perseguem de perto.\nEncostar neles causa 25 de dano, nao morte instantanea.\nVoce tem 100 de vida e fica invulneravel por um instante apos dano.\nNao pare nos corredores; avance ate a saida verde.";
+        if (tutorialRound == 2) return "Inimigos rosas atiram.\nSe ficarem alinhados com voce em linha reta sem parede, eles param e disparam.\nUse ESPACO para atirar. Cinco acertos nocauteiam qualquer inimigo por 5 segundos.\nSua arma tem 15 balas; pressione R para recarregar.";
+        if (tutorialRound == 3) return "A lanterna foi liberada.\nPressione C para ligar ou desligar. Ela revela mais do labirinto, mas gasta bateria.\nNo tutorial, todo round comeca com 100 por cento de bateria.\nUse em rajadas curtas para checar esquinas e encontrar a saida.";
+        return "O chefao roxo e o inimigo quadrado.\nEle calcula caminho ate voce, atira quando fica alinhado e acelera se estiver longe.\nEle tambem cai por 5 segundos depois de cinco acertos.\nO jogo limita cercos para mais de dois inimigos nao prenderem voce de uma vez.";
     }
 
-    if (officialRound == 1) return "Jogo oficial iniciado.\nRounds 1 e 2: vermelho e rosa.\nArma com 20 balas e recarga no R.";
-    if (officialRound == 3) return "Nova dinamica.\nRounds 3 e 4 com lanterna,\nvermelho e rosa.";
-    if (officialRound == 5) return "Nova dinamica.\nRound 5: apenas o chefao roxo.";
-    if (officialRound == 6) return "Nova dinamica.\nRounds 6 a 9 com lanterna,\nvermelho e rosa.";
-    if (officialRound == 10) return "Nova dinamica.\nRound 10: roxo e vermelho.";
-    if (officialRound == 11) return "Nova dinamica.\nRounds 11 a 14 com lanterna,\nvermelho e rosa.";
-    if (officialRound == 15) return "Nova dinamica.\nRound 15: roxo, vermelho e rosa.";
-    if (officialRound == 16) return "Nova dinamica.\nRounds 16 a 19 com lanterna,\nvermelho e rosa.";
-    if (officialRound == 20) return "Dinamica final.\nRound 20 com lanterna,\nvermelho, rosa e roxo.";
-    return "Atravesse o labirinto.\nChegue na saida verde\npara subir de round.";
+    if (currentLanguage == LANGUAGE_EN)
+    {
+        if (officialRound == 1) return "Official run starts now.\nRounds 1 and 2 use red patrol enemies and pink shooters.\nYou start with 100 health, 15 shots, and full battery saved for later rounds.\nReach the green exit to advance.";
+        if (officialRound == 3) return "Flashlight rounds begin.\nRounds 3 and 4 include red and pink enemies plus limited visibility.\nYour battery does not refill every round, so spend it carefully.\nIt refills on round 5 and then every 5 rounds.";
+        if (officialRound == 5) return "Round 5 refills the flashlight battery to 100 percent.\nThis round focuses on the purple boss only.\nKeep moving, break alignment when it shoots, and hit it five times to knock it out.";
+        if (officialRound == 6) return "Rounds 6 and 7 combine the boss with red enemies.\nThe boss hunts directly while red enemies pressure nearby routes.\nUse shots to create space and avoid being boxed in.";
+        if (officialRound == 8) return "Rounds 8 and 9 add every enemy type except flashlight darkness.\nRed enemies chase, pink enemies shoot, and the boss accelerates from far away.\nWatch the music volume: it rises when danger is close.";
+        if (officialRound == 10) return "From round 10 on, everything is active: red, pink, boss, and flashlight.\nThe battery refills only on rounds 10, 15, 20, and so on.\nPlan routes before switching the flashlight off.";
+        if (officialRound == 15) return "Difficulty ramp is now active.\nEnemies become faster and use pathfinding more often each round.\nKnockouts, reload timing, and battery control matter more from here.";
+        return "Cross the maze and reach the green exit.\nUse SPACE to shoot, R to reload, C for flashlight when available, and L for language.\nStay mobile and use knockouts to open a path.";
+    }
+    if (currentLanguage == LANGUAGE_KO)
+    {
+        if (officialRound == 1) return "공식 게임이 시작됩니다.\n라운드 1과 2에는 빨간 순찰 적과 분홍 사격 적이 나옵니다.\n체력 100, 탄약 15발로 시작하고 배터리는 이후 라운드에 대비합니다.\n초록 출구에 도착하면 다음 라운드로 갑니다.";
+        if (officialRound == 3) return "손전등 라운드가 시작됩니다.\n라운드 3과 4에는 빨간 적, 분홍 적, 제한된 시야가 있습니다.\n배터리는 매 라운드 충전되지 않으니 아껴 쓰세요.\n라운드 5부터 5라운드마다 충전됩니다.";
+        if (officialRound == 5) return "라운드 5에서는 손전등 배터리가 100퍼센트로 충전됩니다.\n이번 라운드는 보라색 보스 하나에 집중합니다.\n계속 움직이고, 보스가 쏠 때 일직선을 피하고, 5번 맞혀 기절시키세요.";
+        if (officialRound == 6) return "라운드 6과 7은 보스와 빨간 적이 함께 나옵니다.\n보스는 직접 추적하고 빨간 적은 주변 길을 압박합니다.\n총으로 공간을 만들고 막히지 않게 움직이세요.";
+        if (officialRound == 8) return "라운드 8과 9에는 손전등 어둠을 제외한 모든 적이 나옵니다.\n빨간 적은 추격하고, 분홍 적은 쏘고, 보스는 멀면 빨라집니다.\n음악이 커지면 가까운 위험이 있다는 뜻입니다.";
+        if (officialRound == 10) return "라운드 10부터는 빨간 적, 분홍 적, 보스, 손전등이 모두 활성화됩니다.\n배터리는 10, 15, 20 라운드처럼 5라운드마다만 충전됩니다.\n손전등을 끄기 전에 이동 경로를 확인하세요.";
+        if (officialRound == 15) return "이제 난이도 상승이 시작됩니다.\n라운드가 올라갈수록 적이 더 빠르고 더 자주 길을 계산합니다.\n기절, 재장전 타이밍, 배터리 관리가 중요합니다.";
+        return "미로를 지나 초록 출구에 도착하세요.\n스페이스로 발사, R로 재장전, 가능할 때 C로 손전등, L로 언어 변경.\n계속 움직이고 기절 시간을 이용해 길을 여세요.";
+    }
+
+    if (officialRound == 1) return "A partida oficial comeca agora.\nRounds 1 e 2 usam inimigos vermelhos de patrulha e rosas atiradores.\nVoce inicia com 100 de vida, 15 balas e bateria cheia guardada para os proximos rounds.\nChegue na saida verde para avancar.";
+    if (officialRound == 3) return "Comecam os rounds com lanterna.\nRounds 3 e 4 tem vermelhos, rosas e visao limitada.\nA bateria nao recarrega todo round; use com cuidado.\nEla volta no round 5 e depois a cada 5 rounds.";
+    if (officialRound == 5) return "No round 5 a bateria da lanterna volta para 100 por cento.\nEste round foca apenas no chefao roxo.\nContinue se movendo, quebre o alinhamento quando ele atirar e acerte cinco tiros para nocautea-lo.";
+    if (officialRound == 6) return "Rounds 6 e 7 juntam chefao e inimigos vermelhos.\nO chefao persegue direto, enquanto os vermelhos pressionam rotas proximas.\nUse tiros para abrir espaco e evitar ficar preso.";
+    if (officialRound == 8) return "Rounds 8 e 9 trazem todos os tipos de inimigo, mas sem escuridao da lanterna.\nVermelhos perseguem, rosas atiram e o chefao acelera quando esta longe.\nObserve a musica: ela aumenta quando o perigo esta perto.";
+    if (officialRound == 10) return "Do round 10 em diante, tudo fica ativo: vermelho, rosa, chefao e lanterna.\nA bateria so recarrega nos rounds 10, 15, 20 e assim por diante.\nPlaneje o caminho antes de desligar a lanterna.";
+    if (officialRound == 15) return "A dificuldade crescente esta ativa.\nOs inimigos ficam mais rapidos e usam caminho inteligente com mais frequencia a cada round.\nNocaute, recarga e controle da bateria passam a ser essenciais.";
+    return "Atravesse o labirinto e alcance a saida verde.\nUse ESPACO para atirar, R para recarregar, C para lanterna quando disponivel e L para idioma.\nMantenha movimento e use nocautes para abrir caminho.";
 }
 
 bool ShouldShowRoundInfo(void)
@@ -963,8 +1268,8 @@ bool ShouldShowRoundInfo(void)
     }
 
     return officialRound == 1 || officialRound == 3 || officialRound == 5 ||
-           officialRound == 6 || officialRound == 10 || officialRound == 11 ||
-           officialRound == 15 || officialRound == 16 || officialRound == 20;
+           officialRound == 6 || officialRound == 8 || officialRound == 10 ||
+           officialRound == 15;
 }
 
 void StartCurrentStage(void)
@@ -1137,6 +1442,85 @@ float GetDirectionPlayerDistance(Enemy *enemy, Vector2 direction)
     return GetDistanceBetweenPoints(testPosition, player.position);
 }
 
+bool IsEnemyCountingForCrowd(Enemy *enemy, Enemy *excludedEnemy)
+{
+    return enemy != excludedEnemy && enemy->active && enemy->knockoutTimer <= 0.0f;
+}
+
+int CountEnemiesNearPlayer(Enemy *excludedEnemy)
+{
+    int nearCount = 0;
+
+    for (int i = 0; i < RED_ENEMY_COUNT; i++)
+    {
+        if (IsEnemyCountingForCrowd(&redEnemies[i], excludedEnemy) &&
+            GetDistanceBetweenPoints(redEnemies[i].position, player.position) <= PLAYER_CROWD_RADIUS)
+        {
+            nearCount++;
+        }
+    }
+
+    for (int i = 0; i < BLUE_ENEMY_COUNT; i++)
+    {
+        if (IsEnemyCountingForCrowd(&blueEnemies[i], excludedEnemy) &&
+            GetDistanceBetweenPoints(blueEnemies[i].position, player.position) <= PLAYER_CROWD_RADIUS)
+        {
+            nearCount++;
+        }
+    }
+
+    if (IsEnemyCountingForCrowd(&bossEnemy, excludedEnemy) &&
+        GetDistanceBetweenPoints(bossEnemy.position, player.position) <= PLAYER_CROWD_RADIUS)
+    {
+        nearCount++;
+    }
+
+    return nearCount;
+}
+
+bool WouldEnemyCrowdPlayer(Enemy *enemy, Vector2 position)
+{
+    if (GetDistanceBetweenPoints(position, player.position) > PLAYER_CROWD_RADIUS)
+    {
+        return false;
+    }
+
+    return CountEnemiesNearPlayer(enemy) >= PLAYER_MAX_NEAR_ENEMIES;
+}
+
+bool FindCrowdSafeDirection(Enemy *enemy, Vector2 validDirections[4], int validCount, Vector2 *direction)
+{
+    if (CountEnemiesNearPlayer(enemy) < PLAYER_MAX_NEAR_ENEMIES)
+    {
+        return false;
+    }
+
+    float bestDistance = -1.0f;
+    bool foundSafeDirection = false;
+
+    for (int i = 0; i < validCount; i++)
+    {
+        Vector2 testPosition = enemy->position;
+        testPosition.x += validDirections[i].x * TILE_SIZE;
+        testPosition.y += validDirections[i].y * TILE_SIZE;
+
+        if (WouldEnemyCrowdPlayer(enemy, testPosition))
+        {
+            continue;
+        }
+
+        float distance = GetDistanceBetweenPoints(testPosition, player.position);
+        if (!foundSafeDirection || distance > bestDistance)
+        {
+            bestDistance = distance;
+            *direction = validDirections[i];
+            foundSafeDirection = true;
+        }
+    }
+
+    return foundSafeDirection;
+}
+
 bool FindBestPathDirectionForEnemy(Enemy *enemy, Vector2 *direction)
 {
     int startX = (int)(enemy->position.x / TILE_SIZE);
@@ -1236,7 +1620,12 @@ void ChooseRedEnemyDirection(Enemy *enemy, bool allowReverse)
         return;
     }
 
-    if (GetDistanceBetweenPoints(enemy->position, player.position) <= TILE_SIZE * 5.5f)
+    if (FindCrowdSafeDirection(enemy, validDirections, validCount, &enemy->direction))
+    {
+        return;
+    }
+
+    if (GetDistanceBetweenPoints(enemy->position, player.position) <= GetRedEnemyTrackDistance())
     {
         Vector2 pathDirection = { 0 };
 
@@ -1260,6 +1649,7 @@ void ChooseBlueEnemyDirection(Enemy *enemy, bool allowReverse)
 {
     Vector2 validDirections[4];
     int validCount = CollectEnemyDirections(enemy, validDirections, allowReverse);
+    Vector2 pathDirection = { 0 };
 
     if (validCount == 0)
     {
@@ -1268,6 +1658,24 @@ void ChooseBlueEnemyDirection(Enemy *enemy, bool allowReverse)
             enemy->direction = (Vector2){ -enemy->direction.x, -enemy->direction.y };
         }
         return;
+    }
+
+    if (FindCrowdSafeDirection(enemy, validDirections, validCount, &enemy->direction))
+    {
+        return;
+    }
+
+    if (GetRandomValue(0, 1000) <= (int)(GetBlueEnemyPathfindChance() * 1000.0f) &&
+        FindBestPathDirectionForEnemy(enemy, &pathDirection))
+    {
+        for (int i = 0; i < validCount; i++)
+        {
+            if (validDirections[i].x == pathDirection.x && validDirections[i].y == pathDirection.y)
+            {
+                enemy->direction = pathDirection;
+                return;
+            }
+        }
     }
 
     float bestDistance = 1000000.0f;
@@ -1364,6 +1772,12 @@ void UpdateRedEnemy(Enemy *enemy)
         return;
     }
 
+    if (WouldEnemyCrowdPlayer(enemy, nextPosition))
+    {
+        ChooseRedEnemyDirection(enemy, true);
+        return;
+    }
+
     enemy->position = nextPosition;
 
     if (IsEnemyNearCellCenter(enemy))
@@ -1433,6 +1847,12 @@ void UpdateBlueEnemy(Enemy *enemy)
         return;
     }
 
+    if (WouldEnemyCrowdPlayer(enemy, nextPosition))
+    {
+        ChooseBlueEnemyDirection(enemy, true);
+        return;
+    }
+
     enemy->position = nextPosition;
 
     if (IsEnemyNearCellCenter(enemy))
@@ -1486,14 +1906,14 @@ void UpdateBossEnemy(void)
             shotOrigin.x += shotDirection.x * (bossEnemy.radius + 6.0f);
             shotOrigin.y += shotDirection.y * (bossEnemy.radius + 6.0f);
             SpawnBullet(shotOrigin, shotDirection, BOSS_BULLET_SPEED, false);
-            bossEnemy.shootPauseTimer = 0.85f;
+            bossEnemy.shootPauseTimer = GetBossShootCooldown();
         }
     }
 
     float frameSpeed = bossEnemy.speed * GetFrameTime();
     if (GetDistanceBetweenPoints(bossEnemy.position, player.position) >= BOSS_FAR_DISTANCE_THRESHOLD)
     {
-        frameSpeed *= BOSS_FAR_SPEED_MULTIPLIER;
+        frameSpeed *= GetBossFarSpeedMultiplier();
     }
 
     Vector2 nextPosition = bossEnemy.position;
@@ -1501,6 +1921,12 @@ void UpdateBossEnemy(void)
     nextPosition.y += bossEnemy.direction.y * frameSpeed;
 
     if (IsPositionBlocked(nextPosition, bossEnemy.radius))
+    {
+        ChooseBlueEnemyDirection(&bossEnemy, true);
+        return;
+    }
+
+    if (WouldEnemyCrowdPlayer(&bossEnemy, nextPosition))
     {
         ChooseBlueEnemyDirection(&bossEnemy, true);
         return;
@@ -1524,58 +1950,147 @@ bool IsEnemyDangerous(Enemy *enemy)
     return true;
 }
 
-bool DidEnemyTouchPlayer(void)
+float GetNearestDangerousEnemyDistance(void)
 {
+    float nearestDistance = MUSIC_NEAR_ENEMY_DISTANCE;
+
     for (int i = 0; i < RED_ENEMY_COUNT; i++)
     {
-        if (!IsEnemyDangerous(&redEnemies[i]))
+        if (IsEnemyDangerous(&redEnemies[i]))
         {
-            continue;
-        }
-
-        float dx = redEnemies[i].position.x - player.position.x;
-        float dy = redEnemies[i].position.y - player.position.y;
-        float distance = sqrtf((dx * dx) + (dy * dy));
-        float touchDistance = redEnemies[i].radius + player.radius;
-
-        if (distance <= touchDistance)
-        {
-            return true;
+            nearestDistance = fminf(nearestDistance, GetDistanceBetweenPoints(redEnemies[i].position, player.position));
         }
     }
 
     for (int i = 0; i < BLUE_ENEMY_COUNT; i++)
     {
-        if (!IsEnemyDangerous(&blueEnemies[i]))
+        if (IsEnemyDangerous(&blueEnemies[i]))
         {
-            continue;
-        }
-
-        float dx = blueEnemies[i].position.x - player.position.x;
-        float dy = blueEnemies[i].position.y - player.position.y;
-        float distance = sqrtf((dx * dx) + (dy * dy));
-        float touchDistance = blueEnemies[i].radius + player.radius;
-
-        if (distance <= touchDistance)
-        {
-            return true;
+            nearestDistance = fminf(nearestDistance, GetDistanceBetweenPoints(blueEnemies[i].position, player.position));
         }
     }
 
     if (IsEnemyDangerous(&bossEnemy))
     {
-        float dx = bossEnemy.position.x - player.position.x;
-        float dy = bossEnemy.position.y - player.position.y;
-        float distance = sqrtf((dx * dx) + (dy * dy));
-        float touchDistance = bossEnemy.radius + player.radius;
+        nearestDistance = fminf(nearestDistance, GetDistanceBetweenPoints(bossEnemy.position, player.position));
+    }
 
-        if (distance <= touchDistance)
+    return nearestDistance;
+}
+
+void InitGameAudio(void)
+{
+    InitAudioDevice();
+    backgroundMusic = LoadMusicStream("src/guitar-loops.wav");
+    playerShotSound = LoadSound("src/laser-shot-player.wav");
+    enemyShotSound = LoadSound("src/aser-shot-enemy.wav");
+    playerReloadSound = LoadSound("src/recargapistola.wav");
+    victorySound = LoadSound("src/victory.wav");
+    gameOverSound = LoadSound("src/game_over.wav");
+
+    SetMusicVolume(backgroundMusic, MUSIC_BASE_VOLUME);
+    SetSoundVolume(playerShotSound, PLAYER_SHOT_VOLUME);
+    SetSoundVolume(enemyShotSound, ENEMY_SHOT_VOLUME);
+    SetSoundVolume(playerReloadSound, PLAYER_RELOAD_VOLUME);
+    SetSoundVolume(victorySound, VICTORY_VOLUME);
+    SetSoundVolume(gameOverSound, GAME_OVER_VOLUME);
+    PlayMusicStream(backgroundMusic);
+    gameAudioLoaded = true;
+}
+
+void UpdateGameAudio(void)
+{
+    if (!gameAudioLoaded)
+    {
+        return;
+    }
+
+    UpdateMusicStream(backgroundMusic);
+
+    if (gamePhase == PHASE_PLAYING && playerAlive)
+    {
+        float nearestDistance = GetNearestDangerousEnemyDistance();
+        float danger = 1.0f - fminf(nearestDistance / MUSIC_NEAR_ENEMY_DISTANCE, 1.0f);
+        SetMusicVolume(backgroundMusic, MUSIC_BASE_VOLUME + (danger * (MUSIC_NEAR_ENEMY_VOLUME - MUSIC_BASE_VOLUME)));
+    }
+    else
+    {
+        SetMusicVolume(backgroundMusic, MUSIC_BASE_VOLUME);
+    }
+}
+
+void ShutdownGameAudio(void)
+{
+    if (!gameAudioLoaded)
+    {
+        return;
+    }
+
+    UnloadMusicStream(backgroundMusic);
+    UnloadSound(playerShotSound);
+    UnloadSound(enemyShotSound);
+    UnloadSound(playerReloadSound);
+    UnloadSound(victorySound);
+    UnloadSound(gameOverSound);
+    CloseAudioDevice();
+    gameAudioLoaded = false;
+}
+
+bool IsEnemyTouchingPlayer(Enemy *enemy)
+{
+    if (!IsEnemyDangerous(enemy))
+    {
+        return false;
+    }
+
+    return GetDistanceBetweenPoints(enemy->position, player.position) <= enemy->radius + player.radius;
+}
+
+void DamagePlayer(int damage)
+{
+    if (!playerAlive || playerDamageCooldown > 0.0f)
+    {
+        return;
+    }
+
+    playerHealth -= damage;
+    playerDamageCooldown = PLAYER_DAMAGE_COOLDOWN;
+
+    if (playerHealth <= 0)
+    {
+        playerHealth = 0;
+        playerAlive = false;
+        if (gameAudioLoaded)
         {
-            return true;
+            PlaySound(gameOverSound);
+        }
+    }
+}
+
+void ApplyEnemyTouchDamage(void)
+{
+    for (int i = 0; i < RED_ENEMY_COUNT; i++)
+    {
+        if (IsEnemyTouchingPlayer(&redEnemies[i]))
+        {
+            DamagePlayer(ENEMY_TOUCH_DAMAGE);
+            return;
         }
     }
 
-    return false;
+    for (int i = 0; i < BLUE_ENEMY_COUNT; i++)
+    {
+        if (IsEnemyTouchingPlayer(&blueEnemies[i]))
+        {
+            DamagePlayer(ENEMY_TOUCH_DAMAGE);
+            return;
+        }
+    }
+
+    if (IsEnemyTouchingPlayer(&bossEnemy))
+    {
+        DamagePlayer(ENEMY_TOUCH_DAMAGE);
+    }
 }
 
 void UpdateBullets(void)
@@ -1613,7 +2128,7 @@ void UpdateBullets(void)
                     if (redEnemies[enemyIndex].hitsTaken >= RED_HIT_LIMIT)
                     {
                         redEnemies[enemyIndex].hitsTaken = 0;
-                        redEnemies[enemyIndex].knockoutTimer = BLUE_KNOCKOUT_TIME;
+                        redEnemies[enemyIndex].knockoutTimer = ENEMY_KNOCKOUT_TIME;
                         redEnemies[enemyIndex].shootPauseTimer = 0.0f;
                     }
                     break;
@@ -1640,7 +2155,7 @@ void UpdateBullets(void)
                     if (blueEnemies[enemyIndex].hitsTaken >= BLUE_HIT_LIMIT)
                     {
                         blueEnemies[enemyIndex].hitsTaken = 0;
-                        blueEnemies[enemyIndex].knockoutTimer = BLUE_KNOCKOUT_TIME;
+                        blueEnemies[enemyIndex].knockoutTimer = ENEMY_KNOCKOUT_TIME;
                         blueEnemies[enemyIndex].shootPauseTimer = 0.0f;
                     }
                     break;
@@ -1664,7 +2179,7 @@ void UpdateBullets(void)
                 if (bossEnemy.hitsTaken >= BOSS_HIT_LIMIT)
                 {
                     bossEnemy.hitsTaken = 0;
-                    bossEnemy.knockoutTimer = BOSS_KNOCKOUT_TIME;
+                    bossEnemy.knockoutTimer = ENEMY_KNOCKOUT_TIME;
                     bossEnemy.shootPauseTimer = 0.0f;
                 }
             }
@@ -1678,13 +2193,7 @@ void UpdateBullets(void)
             if (distance <= player.radius + bullets[i].radius)
             {
                 bullets[i].active = false;
-                playerHealth -= BLUE_BULLET_DAMAGE;
-
-                if (playerHealth <= 0)
-                {
-                    playerHealth = 0;
-                    playerAlive = false;
-                }
+                DamagePlayer(BLUE_BULLET_DAMAGE);
             }
         }
     }
@@ -1712,16 +2221,18 @@ void DrawPlayerHealthBar(float x, float y)
 
     barFill.width = (barBackground.width * (float)playerHealth) / (float)PLAYER_MAX_HEALTH;
 
-    if (playerHealth <= 30)
+    float healthRatio = (PLAYER_MAX_HEALTH > 0) ? ((float)playerHealth / (float)PLAYER_MAX_HEALTH) : 0.0f;
+
+    if (healthRatio <= 0.3f)
     {
         healthColor = RED;
     }
-    else if (playerHealth <= 60)
+    else if (healthRatio <= 0.6f)
     {
         healthColor = ORANGE;
     }
 
-    DrawTextStrong(TextFormat("Vida: %d/%d", playerHealth, PLAYER_MAX_HEALTH), (int)x, (int)(y - 24.0f), 18, RAYWHITE, BLACK);
+    DrawTextStrong(TextFormat(T(TEXT_HEALTH), playerHealth, PLAYER_MAX_HEALTH), (int)x, (int)(y - 24.0f), 18, RAYWHITE, BLACK);
     DrawRectangleRounded(barBackground, 0.22f, 10, (Color){ 35, 35, 35, 255 });
     DrawRectangleRounded(barFill, 0.35f, 10, healthColor);
     DrawRectangleRoundedLinesEx(barBackground, 0.22f, 10, 2.0f, RAYWHITE);
@@ -1739,7 +2250,7 @@ void DrawHud(void)
     float textX = panelX + 16.0f;
     float rowY = panelY + 16.0f;
 
-    Rectangle panel = { panelX, panelY, panelWidth, currentRoundConfig.flashlightEnabled ? 346.0f : 290.0f };
+    Rectangle panel = { panelX, panelY, panelWidth, currentRoundConfig.flashlightEnabled ? 448.0f : 374.0f };
 
     DrawRectangleRounded(panel, 0.06f, 10, HUD_PANEL_COLOR);
     DrawRectangleRoundedLinesEx(panel, 0.06f, 10, 2.0f, HUD_BORDER_COLOR);
@@ -1754,9 +2265,9 @@ void DrawHud(void)
     rowY += 14.0f;
 
     /* Progress row */
-    DrawTextStrong(TextFormat("Recorde pessoal: round %d", bestOfficialRound), (int)textX, (int)rowY, 18, GOLD, BLACK);
+    DrawTextStrong(TextFormat(T(TEXT_BEST_ROUND), bestOfficialRound), (int)textX, (int)rowY, 18, GOLD, BLACK);
     rowY += 26.0f;
-    DrawTextStrong(inTutorialSequence ? TextFormat("Tutorial %d/4", tutorialRound) : TextFormat("Round %d", officialRound), (int)textX, (int)rowY, 20, RAYWHITE, BLACK);
+    DrawTextStrong(inTutorialSequence ? TextFormat(T(TEXT_TUTORIAL_PROGRESS), tutorialRound) : TextFormat(T(TEXT_ROUND_PROGRESS), officialRound), (int)textX, (int)rowY, 20, RAYWHITE, BLACK);
     rowY += 48.0f;
 
     /* Health row (label is drawn above its own bar inside the function) */
@@ -1767,39 +2278,41 @@ void DrawHud(void)
     rowY += 14.0f;
 
     /* Controls row */
-    DrawTextStrong("Atirar: ESPACO", (int)textX, (int)rowY, 20, ORANGE, BLACK);
+    DrawTextStrong(T(TEXT_SHOOT), (int)textX, (int)rowY, 20, ORANGE, BLACK);
     rowY += 28.0f;
-    DrawTextStrong(TextFormat("Balas: %d/%d", playerAmmo, PLAYER_MAX_AMMO), (int)textX, (int)rowY, 18, RAYWHITE, BLACK);
+    DrawTextStrong(TextFormat(T(TEXT_AMMO), playerAmmo, PLAYER_MAX_AMMO), (int)textX, (int)rowY, 18, RAYWHITE, BLACK);
     rowY += 22.0f;
     if (playerReloadTimer > 0.0f)
     {
-        DrawTextStrong(TextFormat("Recarregando: %.1fs", playerReloadTimer), (int)textX, (int)rowY, 18, YELLOW, BLACK);
+        DrawTextStrong(TextFormat(T(TEXT_RELOADING), playerReloadTimer), (int)textX, (int)rowY, 18, YELLOW, BLACK);
     }
     else
     {
-        DrawTextStrong("Recarregar: R", (int)textX, (int)rowY, 18, SKYBLUE, BLACK);
+        DrawTextStrong(T(TEXT_RELOAD), (int)textX, (int)rowY, 18, SKYBLUE, BLACK);
     }
     rowY += 24.0f;
 
     if (currentRoundConfig.flashlightEnabled)
     {
-        DrawTextStrong("Lanterna: C", (int)textX, (int)rowY, 18, GOLD, BLACK);
+        DrawTextStrong(T(TEXT_FLASHLIGHT_CONTROL), (int)textX, (int)rowY, 18, GOLD, BLACK);
         rowY += 24.0f;
-        DrawTextStrong(TextFormat("Lanterna: %s", flashlightOn ? "ligada" : "desligada"), (int)textX, (int)rowY, 18, flashlightOn ? GREEN : GRAY, BLACK);
+        DrawTextStrong(TextFormat(T(TEXT_FLASHLIGHT_STATE), flashlightOn ? T(TEXT_FLASHLIGHT_ON) : T(TEXT_FLASHLIGHT_OFF)), (int)textX, (int)rowY, 18, flashlightOn ? GREEN : GRAY, BLACK);
         rowY += 24.0f;
-        DrawTextStrong(TextFormat("Bateria: %.0f%%", flashlightBattery), (int)textX, (int)rowY, 18, GREEN, BLACK);
+        DrawTextStrong(TextFormat(T(TEXT_BATTERY), flashlightBattery), (int)textX, (int)rowY, 18, GREEN, BLACK);
         rowY += 24.0f;
     }
+
+    DrawTextStrong(T(TEXT_LANGUAGE_HINT), (int)textX, (int)rowY, 15, LIGHTGRAY, BLACK);
 }
 
 void DrawGameOverOverlay(void)
 {
-    const char *title = "VOCE MORREU";
-    const char *buttonText = "JOGAR DE NOVO";
+    const char *title = T(TEXT_GAME_OVER);
+    const char *buttonText = T(TEXT_PLAY_AGAIN);
     int titleFontSize = 42;
     int buttonFontSize = 24;
-    int titleWidth = MeasureText(title, titleFontSize);
-    int buttonTextWidth = MeasureText(buttonText, buttonFontSize);
+    int titleWidth = (int)MeasureTextStrongSpaced(title, titleFontSize, 1.0f).x;
+    int buttonTextWidth = (int)MeasureTextStrongSpaced(buttonText, buttonFontSize, 1.0f).x;
     int screenWidth = GetScreenWidth();
     int screenHeight = GetScreenHeight();
     int panelWidth = 420;
@@ -1823,9 +2336,9 @@ void DrawGameOverOverlay(void)
     DrawRectangle(0, 0, screenWidth, screenHeight, Fade(BLACK, 0.55f));
     DrawRectangleRounded(panel, 0.12f, 12, (Color){ 24, 24, 24, 235 });
     DrawRectangleRoundedLinesEx(panel, 0.12f, 12, 3.0f, GREEN);
-    DrawText(title, (int)(panel.x + (panel.width - titleWidth) * 0.5f), (int)panel.y + 44, titleFontSize, RAYWHITE);
+    DrawTextStrong(title, (int)(panel.x + (panel.width - titleWidth) * 0.5f), (int)panel.y + 44, titleFontSize, RAYWHITE, BLACK);
     DrawRectangleRounded(button, 0.3f, 12, buttonColor);
-    DrawText(buttonText, (int)(button.x + (button.width - buttonTextWidth) * 0.5f), (int)(button.y + 14.0f), buttonFontSize, BLACK);
+    DrawTextStrong(buttonText, (int)(button.x + (button.width - buttonTextWidth) * 0.5f), (int)(button.y + 14.0f), buttonFontSize, BLACK, Fade(WHITE, 0.25f));
 
     if (isButtonHovered && IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
     {
@@ -2024,7 +2537,7 @@ void DrawRoundPanel(const char *title, const char *body, const char *footer)
 
     int screenWidth = GetScreenWidth();
     int screenHeight = GetScreenHeight();
-    int titleWidth = MeasureText(title, 30);
+    int titleWidth = (int)MeasureTextStrongSpaced(title, 30, 1.0f).x;
     Vector2 bodySize = MeasureTextStrongSpaced(body, (int)bodyFontSize, bodySpacing);
     Rectangle panel = GetRoundPanelRect(title, body);
 
@@ -2044,8 +2557,13 @@ void DrawRoundPanel(const char *title, const char *body, const char *footer)
 
         DrawRectangleRounded(skipButton, 0.28f, 10, fillColor);
         DrawRectangleRoundedLinesEx(skipButton, 0.28f, 10, 2.0f, HUD_BORDER_COLOR);
-        DrawTextStrong("Pular tutorial", (int)skipButton.x + 28, (int)skipButton.y + 9, 20, RAYWHITE, BLACK);
+        DrawTextStrong(T(TEXT_SKIP_TUTORIAL), (int)skipButton.x + 20, (int)skipButton.y + 9, 20, RAYWHITE, BLACK);
     }
+}
+
+void CycleLanguage(void)
+{
+    currentLanguage = (Language)(((int)currentLanguage + 1) % (int)LANGUAGE_COUNT);
 }
 
 int main(int argc, char *argv[])
@@ -2053,6 +2571,8 @@ int main(int argc, char *argv[])
     (void)argc;
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "ByteMaze");
+    InitUIFont();
+    InitGameAudio();
     MaximizeWindow();
     SetTargetFPS(60);
     SetRandomSeed((unsigned int)GetTime());
@@ -2061,10 +2581,17 @@ int main(int argc, char *argv[])
     while (!WindowShouldClose())
     {
         UpdateBuildMetrics(argv[0]);
+        UpdateGameAudio();
+        bool languagePressed = IsKeyPressed(KEY_L);
+
+        if (languagePressed)
+        {
+            CycleLanguage();
+        }
 
         if (gamePhase == PHASE_INTRO)
         {
-            if (GetKeyPressed() != 0 || IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+            if (!languagePressed && (GetKeyPressed() != 0 || IsMouseButtonPressed(MOUSE_BUTTON_LEFT)))
             {
                 tutorialRound = 1;
                 inTutorialSequence = true;
@@ -2095,7 +2622,7 @@ int main(int argc, char *argv[])
                 }
             }
 
-            if (GetKeyPressed() != 0 || IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+            if (!languagePressed && (GetKeyPressed() != 0 || IsMouseButtonPressed(MOUSE_BUTTON_LEFT)))
             {
                 gamePhase = PHASE_PLAYING;
             }
@@ -2109,6 +2636,15 @@ int main(int argc, char *argv[])
 
             if (playerAlive)
             {
+                if (playerDamageCooldown > 0.0f)
+                {
+                    playerDamageCooldown -= GetFrameTime();
+                    if (playerDamageCooldown < 0.0f)
+                    {
+                        playerDamageCooldown = 0.0f;
+                    }
+                }
+
                 UpdatePlayer();
                 UpdatePlayerShooting();
                 UpdatePlayerReload();
@@ -2123,14 +2659,14 @@ int main(int argc, char *argv[])
                 }
                 UpdateBossEnemy();
                 UpdateBullets();
-
-                if (DidEnemyTouchPlayer())
-                {
-                    playerAlive = false;
-                }
+                ApplyEnemyTouchDamage();
 
                 if (DidPlayerReachExit())
                 {
+                    if (gameAudioLoaded)
+                    {
+                        PlaySound(victorySound);
+                    }
                     AdvanceToNextStage();
                 }
             }
@@ -2156,16 +2692,18 @@ int main(int argc, char *argv[])
 
         if (gamePhase == PHASE_INTRO)
         {
-            DrawRoundPanel(GetIntroTitle(), GetIntroBody(), "Pressione qualquer tecla ou clique para iniciar o tutorial.");
+            DrawRoundPanel(GetIntroTitle(), GetIntroBody(), T(TEXT_INTRO_FOOTER));
         }
         else if (gamePhase == PHASE_INFO)
         {
-            DrawRoundPanel(GetRoundInfoTitle(), GetRoundInfoBody(), "Pressione qualquer tecla ou clique para comecar.");
+            DrawRoundPanel(GetRoundInfoTitle(), GetRoundInfoBody(), T(TEXT_ROUND_FOOTER));
         }
 
         EndDrawing();
     }
 
+    ShutdownGameAudio();
+    ShutdownUIFont();
     CloseWindow();
     return 0;
 }
