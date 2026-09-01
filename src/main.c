@@ -460,14 +460,47 @@ Font GetUIFont(void)
     return uiFontLoaded ? uiFont : GetFontDefault();
 }
 
+/* UI_FONT_PATH only exists on some Linux distros. Try it first, then fall
+ * back to the common Korean-capable fonts shipped with Windows and macOS,
+ * so glyphs render correctly instead of falling back to the default font
+ * (which has no CJK glyphs and draws "?" for every Korean character). */
+static const char *uiFontCandidatePaths[] = {
+    UI_FONT_PATH,
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+    "C:\\Windows\\Fonts\\malgun.ttf",
+    "C:\\Windows\\Fonts\\malgunbd.ttf",
+    "/System/Library/Fonts/Supplemental/AppleSDGothicNeo.ttc",
+    "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+    NULL
+};
+
 void InitUIFont(void)
 {
     int codepointCount = 0;
     int *codepoints = LoadCodepoints(koreanGlyphText, &codepointCount);
 
-    uiFont = LoadFontEx(UI_FONT_PATH, UI_FONT_SIZE, codepoints, codepointCount);
+    for (int i = 0; uiFontCandidatePaths[i] != NULL; i++)
+    {
+        if (!FileExists(uiFontCandidatePaths[i]))
+        {
+            continue;
+        }
+
+        uiFont = LoadFontEx(uiFontCandidatePaths[i], UI_FONT_SIZE, codepoints, codepointCount);
+        if (uiFont.texture.id > 0)
+        {
+            break;
+        }
+    }
+
     UnloadCodepoints(codepoints);
     uiFontLoaded = uiFont.texture.id > 0;
+
+    if (uiFontLoaded)
+    {
+        SetTextureFilter(uiFont.texture, TEXTURE_FILTER_BILINEAR);
+    }
 }
 
 void ShutdownUIFont(void)
@@ -563,14 +596,33 @@ bool IsWorldPositionVisible(Vector2 position)
     return false;
 }
 
+/* Draws text as bold by stacking several 1px-offset copies before the
+ * final pass, thickening every stroke instead of relying on the font's
+ * own (often thin) regular weight. */
+void DrawTextBoldEx(Font font, const char *text, Vector2 position, float fontSize, float spacing, Color color)
+{
+    static const Vector2 boldOffsets[] = {
+        { -1.0f, 0.0f }, { 1.0f, 0.0f }, { 0.0f, -1.0f }, { 0.0f, 1.0f },
+        { -1.0f, -1.0f }, { 1.0f, -1.0f }, { -1.0f, 1.0f }, { 1.0f, 1.0f }
+    };
+
+    for (int i = 0; i < 8; i++)
+    {
+        Vector2 offsetPos = { position.x + boldOffsets[i].x, position.y + boldOffsets[i].y };
+        DrawTextEx(font, text, offsetPos, fontSize, spacing, color);
+    }
+
+    DrawTextEx(font, text, position, fontSize, spacing, color);
+}
+
 void DrawTextStrong(const char *text, int x, int y, int fontSize, Color color, Color shadowColor)
 {
     Font font = GetUIFont();
     Vector2 shadowPos = { (float)(x + 2), (float)(y + 2) };
     Vector2 textPos = { (float)x, (float)y };
 
-    DrawTextEx(font, text, shadowPos, (float)fontSize, 1.0f, shadowColor);
-    DrawTextEx(font, text, textPos, (float)fontSize, 1.0f, color);
+    DrawTextBoldEx(font, text, shadowPos, (float)fontSize, 1.0f, shadowColor);
+    DrawTextBoldEx(font, text, textPos, (float)fontSize, 1.0f, color);
 }
 
 /* Same as DrawTextStrong, but lets the caller control the space between
@@ -581,8 +633,8 @@ void DrawTextStrongSpaced(const char *text, int x, int y, int fontSize, float sp
     Vector2 shadowPos = { (float)(x + 2), (float)(y + 2) };
     Vector2 textPos = { (float)x, (float)y };
 
-    DrawTextEx(font, text, shadowPos, (float)fontSize, spacing, shadowColor);
-    DrawTextEx(font, text, textPos, (float)fontSize, spacing, color);
+    DrawTextBoldEx(font, text, shadowPos, (float)fontSize, spacing, shadowColor);
+    DrawTextBoldEx(font, text, textPos, (float)fontSize, spacing, color);
 }
 
 /* Measures multiline text drawn with DrawTextStrongSpaced so panels can
@@ -662,17 +714,50 @@ bool IsWallCell(int x, int y)
     return grid[y][x] == CELL_WALL;
 }
 
+/* True circle-vs-tile overlap test: finds the closest point of the wall
+ * cell's rectangle to the circle's center and checks if that point is
+ * actually inside the circle. This lets the player hug a wall and only
+ * get blocked once it truly touches it, instead of the old bounding-box
+ * check which blocked movement early (including on the empty corner of a
+ * diagonal cell that the circle never actually reached). */
+bool CircleOverlapsWallCell(Vector2 center, float radius, int cellX, int cellY)
+{
+    if (!IsWallCell(cellX, cellY))
+    {
+        return false;
+    }
+
+    float cellLeft = (float)(cellX * TILE_SIZE);
+    float cellTop = (float)(cellY * TILE_SIZE);
+    float cellRight = cellLeft + TILE_SIZE;
+    float cellBottom = cellTop + TILE_SIZE;
+
+    float closestX = fmaxf(cellLeft, fminf(center.x, cellRight));
+    float closestY = fmaxf(cellTop, fminf(center.y, cellBottom));
+
+    float dx = center.x - closestX;
+    float dy = center.y - closestY;
+
+    return (dx * dx + dy * dy) < (radius * radius);
+}
+
 bool IsPositionBlocked(Vector2 position, float radius)
 {
-    int left = (int)(position.x - radius) / TILE_SIZE;
-    int right = (int)(position.x + radius) / TILE_SIZE;
-    int top = (int)(position.y - radius) / TILE_SIZE;
-    int bottom = (int)(position.y + radius) / TILE_SIZE;
+    int left = (int)floorf((position.x - radius) / TILE_SIZE);
+    int right = (int)floorf((position.x + radius) / TILE_SIZE);
+    int top = (int)floorf((position.y - radius) / TILE_SIZE);
+    int bottom = (int)floorf((position.y + radius) / TILE_SIZE);
 
-    if (IsWallCell(left, top)) return true;
-    if (IsWallCell(right, top)) return true;
-    if (IsWallCell(left, bottom)) return true;
-    if (IsWallCell(right, bottom)) return true;
+    for (int y = top; y <= bottom; y++)
+    {
+        for (int x = left; x <= right; x++)
+        {
+            if (CircleOverlapsWallCell(position, radius, x, y))
+            {
+                return true;
+            }
+        }
+    }
 
     return false;
 }
