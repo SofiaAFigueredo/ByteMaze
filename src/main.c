@@ -15,7 +15,7 @@
 #define GRID_HEIGTH 21
 #define GRID_WIDTH 31
 #define TILE_SIZE 24
-#define HUD_HEIGHT 56.0f
+#define HUD_HEIGHT 92.0f
 #define MAZE_PADDING 24.0f
 #define CONTEST_BYTE_LIMIT 1474560LL
 
@@ -73,9 +73,9 @@ int playerAmmo = PLAYER_MAX_AMMO;
 float playerReloadTimer = 0.0f;
 float playerDamageCooldown = 0.0f;
 
-Color HUD_PANEL_COLOR = { 8, 10, 22, 225 };
-Color HUD_BORDER_COLOR = { 60, 210, 255, 255 };
-Color HUD_ACCENT_COLOR = { 190, 90, 255, 255 };
+Color HUD_PANEL_COLOR = { 5, 10, 32, 232 };
+Color HUD_BORDER_COLOR = { 45, 190, 255, 255 };
+Color HUD_ACCENT_COLOR = { 205, 80, 255, 255 };
 Color MAZE_WALL_COLOR = { 20, 22, 36, 255 };
 Color MAZE_PATH_COLOR = { 235, 240, 250, 255 };
 Color MAZE_SHADOW_COLOR = { 8, 9, 18, 255 };
@@ -87,42 +87,104 @@ float GetUIScale(void);
  * its text never has to compress past its readable floor and overflow
  * the border. The maze reserves this much on the left when it lays
  * itself out, so there's always room and the panel never overlaps it. */
+static bool IsCompactLayout(void)
+{
+    return GetScreenWidth() < 1250 || GetScreenHeight() < 720;
+}
+
 float GetHudPanelWidth(void)
 {
     float scale = GetUIScale();
-    return fminf((float)GetScreenWidth() - (20.0f * scale), 408.0f * scale);
+    float w = (float)GetScreenWidth();
+
+    if (IsCompactLayout())
+    {
+        return fmaxf(250.0f * scale, fminf(w - 24.0f * scale, 420.0f * scale));
+    }
+
+    return fminf(220.0f * scale, w * 0.19f);
 }
 
 float GetMazeLeftReservedWidth(void)
 {
+    if (IsCompactLayout()) return 0.0f;
+    return GetHudPanelWidth() + (24.0f * GetUIScale());
+}
+
+float GetHudRightPanelWidth(void)
+{
     float scale = GetUIScale();
-    return (10.0f * scale) + GetHudPanelWidth() + (20.0f * scale);
+    float w = (float)GetScreenWidth();
+
+    if (IsCompactLayout())
+    {
+        return fmaxf(250.0f * scale, fminf(w - 24.0f * scale, 420.0f * scale));
+    }
+
+    return fminf(220.0f * scale, w * 0.19f);
 }
 
 float GetMazeScale(void)
 {
     float mazeWidth = (float)(GRID_WIDTH * TILE_SIZE);
     float mazeHeight = (float)(GRID_HEIGTH * TILE_SIZE);
-    float leftReserved = GetMazeLeftReservedWidth();
-    float availableWidth = (float)GetScreenWidth() - leftReserved - MAZE_PADDING;
-    float availableHeight = (float)GetScreenHeight() - HUD_HEIGHT - (MAZE_PADDING * 2.0f);
+    float ui = GetUIScale();
+
+    if (IsCompactLayout())
+    {
+        /* Compact mode: the maze gets the entire central area. HUD panels
+         * are drawn above/below it instead of stealing horizontal space. */
+        float horizontalPadding = 24.0f * ui;
+        float topSpace = 100.0f * ui;
+        float bottomSpace = 150.0f * ui;
+        float availableWidth = (float)GetScreenWidth() - horizontalPadding * 2.0f;
+        float availableHeight = (float)GetScreenHeight() - topSpace - bottomSpace;
+        float scaleX = availableWidth / mazeWidth;
+        float scaleY = availableHeight / mazeHeight;
+        return fmaxf(0.40f, fminf(fminf(scaleX, scaleY), 1.65f));
+    }
+
+    float sideGap = 28.0f * ui;
+    float availableWidth = (float)GetScreenWidth()
+        - GetMazeLeftReservedWidth()
+        - GetHudRightPanelWidth()
+        - sideGap;
+    float availableHeight = (float)GetScreenHeight()
+        - (88.0f * ui)
+        - (30.0f * ui);
     float scaleX = availableWidth / mazeWidth;
     float scaleY = availableHeight / mazeHeight;
-    return fminf(scaleX, scaleY);
+
+    return fmaxf(0.65f, fminf(fminf(scaleX, scaleY), 1.65f));
 }
 
 Vector2 GetMazeOffset(float scale)
 {
     float mazeWidth = (float)(GRID_WIDTH * TILE_SIZE) * scale;
     float mazeHeight = (float)(GRID_HEIGTH * TILE_SIZE) * scale;
-    float leftReserved = GetMazeLeftReservedWidth();
-    float freeWidth = (float)GetScreenWidth() - leftReserved - mazeWidth;
-    float freeHeight = (float)GetScreenHeight() - HUD_HEIGHT - mazeHeight;
+    float ui = GetUIScale();
 
-    Vector2 offset = { 0 };
-    offset.x = leftReserved + (freeWidth * 0.5f);
-    offset.y = HUD_HEIGHT + (freeHeight * 0.5f);
-    return offset;
+    if (IsCompactLayout())
+    {
+        float topSpace = 100.0f * ui;
+        float bottomSpace = 150.0f * ui;
+        return (Vector2){
+            ((float)GetScreenWidth() - mazeWidth) * 0.5f,
+            topSpace + (((float)GetScreenHeight() - topSpace - bottomSpace) - mazeHeight) * 0.5f
+        };
+    }
+
+    float leftReserved = GetMazeLeftReservedWidth();
+    float rightReserved = GetHudRightPanelWidth();
+    float sideGap = 28.0f * ui;
+    float availableWidth = (float)GetScreenWidth() - leftReserved - rightReserved - sideGap;
+    float freeWidth = availableWidth - mazeWidth;
+    float freeHeight = (float)GetScreenHeight() - (88.0f * ui) - mazeHeight;
+
+    return (Vector2){
+        leftReserved + (sideGap * 0.5f) + (freeWidth * 0.5f),
+        (88.0f * ui) + (freeHeight * 0.5f)
+    };
 }
 
 Vector2 WorldToScreenPosition(Vector2 worldPosition, float scale, Vector2 offset)
@@ -1069,7 +1131,14 @@ void DrawLanguageFlag(Language language, Rectangle bounds)
         DrawTriangle(top, right, bottom, GOLD);
         DrawTriangle(top, bottom, left, GOLD);
         DrawCircleV(center, bounds.height * 0.26f, (Color){ 20, 65, 160, 255 });
-        DrawLineEx((Vector2){ center.x - bounds.width * 0.12f, center.y - 1.0f }, (Vector2){ center.x + bounds.width * 0.12f, center.y + 1.0f }, 2.0f, RAYWHITE);
+        /* Faixa branca para deixar a bandeira brasileira claramente visível
+         * mesmo no tamanho pequeno usado no botão. */
+        DrawLineEx(
+            (Vector2){ center.x - bounds.width * 0.19f, center.y - bounds.height * 0.03f },
+            (Vector2){ center.x + bounds.width * 0.19f, center.y + bounds.height * 0.03f },
+            fmaxf(1.0f, bounds.height * 0.07f),
+            RAYWHITE
+        );
     }
     else if (language == LANGUAGE_ES)
     {
@@ -1098,29 +1167,38 @@ void DrawLanguageFlag(Language language, Rectangle bounds)
 
     DrawRectangleRoundedLinesEx(bounds, 0.18f, 6, 1.0f, Fade(BLACK, 0.45f));
 }
-
 Rectangle GetLanguageButtonRect(int languageIndex)
 {
     float scale = GetUIScale();
-    float gap = 8.0f * scale;
-    float availableWidth = (float)GetScreenWidth() - (20.0f * scale);
-    float buttonWidth = 140.0f * scale;
-    float buttonHeight = 34.0f * scale;
-    float totalWidth = ((float)LANGUAGE_COUNT * buttonWidth) + ((float)(LANGUAGE_COUNT - 1) * gap);
+    float gap = 6.0f * scale;
+    float w = (float)GetScreenWidth();
 
-    if (totalWidth > availableWidth)
+    if (IsCompactLayout())
     {
-        buttonWidth = (availableWidth - ((float)(LANGUAGE_COUNT - 1) * gap)) / (float)LANGUAGE_COUNT;
-        totalWidth = availableWidth;
+        /* A single compact row sits below the logo. It scales down with the
+         * window, so all four language buttons remain inside the viewport. */
+        float buttonWidth = (w - (28.0f * scale) - (3.0f * gap)) / 4.0f;
+        buttonWidth = fmaxf(62.0f * scale, buttonWidth);
+        return (Rectangle){
+            14.0f * scale + languageIndex * (buttonWidth + gap),
+            58.0f * scale,
+            buttonWidth,
+            28.0f * scale
+        };
     }
 
-    float startX = ((float)GetScreenWidth() - totalWidth) * 0.5f;
+    float maxWidth = 128.0f * scale;
+    float minWidth = 84.0f * scale;
+    float available = w - (350.0f * scale);
+    float buttonWidth = fminf(maxWidth, fmaxf(minWidth, (available - (3.0f * gap)) / 4.0f));
+    float totalWidth = (4.0f * buttonWidth) + (3.0f * gap);
+    float startX = w - totalWidth - (16.0f * scale);
 
     return (Rectangle){
         startX + ((float)languageIndex * (buttonWidth + gap)),
-        10.0f * scale,
+        22.0f * scale,
         buttonWidth,
-        buttonHeight
+        38.0f * scale
     };
 }
 
@@ -1143,36 +1221,82 @@ bool HandleLanguageButtons(void)
 
     return false;
 }
-
 void DrawLanguageButtons(void)
 {
     Vector2 mousePosition = GetMousePosition();
+    float scale = GetUIScale();
 
     for (int i = 0; i < (int)LANGUAGE_COUNT; i++)
     {
         Rectangle button = GetLanguageButtonRect(i);
         bool selected = currentLanguage == (Language)i;
         bool hovered = CheckCollisionPointRec(mousePosition, button);
-        Color fillColor = selected ? (Color){ 0, 130, 54, 245 } : (Color){ 18, 48, 30, 235 };
-        Color borderColor = selected ? LIME : HUD_BORDER_COLOR;
+        Color fillColor = selected ? (Color){ 18, 34, 88, 245 } : (Color){ 5, 14, 40, 235 };
+        Color borderColor = selected ? (Color){ 130, 105, 255, 255 } : Fade(HUD_BORDER_COLOR, 0.65f);
         const char *label = uiText[i][TEXT_LANGUAGE_BUTTON];
-        float scale = GetUIScale();
-        int fontSize = ScaleFontSize(14.0f);
-        Rectangle flag = {
-            button.x + button.width - (46.0f * scale),
-            button.y + (6.0f * scale),
-            36.0f * scale,
-            22.0f * scale
-        };
 
         if (hovered && !selected)
         {
-            fillColor = (Color){ 25, 80, 44, 245 };
+            fillColor = (Color){ 12, 28, 68, 245 };
+            borderColor = HUD_BORDER_COLOR;
         }
 
-        DrawRectangleRounded(button, 0.18f, 10, fillColor);
-        DrawRectangleRoundedLinesEx(button, 0.18f, 10, selected ? 3.0f : 2.0f, borderColor);
-        DrawTextStrong(label, (int)(button.x + 14.0f * scale), (int)(button.y + 9.0f * scale), fontSize, RAYWHITE, BLACK);
+        DrawRectangleRounded(button, 0.16f, 8, fillColor);
+        DrawRectangleRoundedLinesEx(
+            button, 0.16f, 8,
+            selected ? 2.0f * scale : 1.0f * scale,
+            borderColor
+        );
+
+        /*
+         * Reserve a dedicated area for the flag.  PT-BR is the longest label,
+         * so its font is fitted independently instead of colliding with the
+         * flag or touching the border.
+         */
+        float flagWidth = 30.0f * scale;
+        float flagHeight = 21.0f * scale;
+        float flagRight = 7.0f * scale;
+        float labelLeft = 10.0f * scale;
+        float labelRight = flagRight + flagWidth + 7.0f * scale;
+        float labelMaxWidth = button.width - labelLeft - labelRight;
+
+        int fontSize = FitFontSizeToWidth(
+            label,
+            ScaleFontSize(13.0f),
+            ScaleFontSize(8.0f),
+            0.35f * scale,
+            labelMaxWidth
+        );
+
+        float labelWidth = MeasureTextStrongSpaced(
+            label, fontSize, 0.35f * scale
+        ).x;
+
+        float labelX = button.x + labelLeft;
+        if (labelWidth < labelMaxWidth)
+        {
+            labelX += (labelMaxWidth - labelWidth) * 0.5f;
+        }
+
+        float labelY = button.y + (button.height - (float)fontSize * 1.15f) * 0.5f;
+
+        DrawTextStrongSpaced(
+            label,
+            (int)labelX,
+            (int)labelY,
+            fontSize,
+            0.35f * scale,
+            RAYWHITE,
+            BLACK
+        );
+
+        Rectangle flag = {
+            button.x + button.width - flagRight - flagWidth,
+            button.y + (button.height - flagHeight) * 0.5f,
+            flagWidth,
+            flagHeight
+        };
+
         DrawLanguageFlag((Language)i, flag);
     }
 }
@@ -3120,86 +3244,284 @@ void DrawPlayerHealthBar(float x, float y, float width, float scale)
     DrawTextStrongFit(TextFormat(T(TEXT_HEALTH), playerHealth, PLAYER_MAX_HEALTH), (int)x, (int)(y - 25.0f * scale), healthFontSize, 12, 1.0f * scale, width, RAYWHITE, BLACK);
     DrawSegmentedBar(x, y, width, 20.0f * scale, totalSegments, filledSegments, healthColor, (Color){ 30, 34, 52, 255 }, scale);
 }
+static void DrawTechPanel(Rectangle panel, Color accent)
+{
+    float scale = GetUIScale();
+    DrawRectangleRounded((Rectangle){ panel.x + 4.0f * scale, panel.y + 5.0f * scale, panel.width, panel.height }, 0.08f, 10, Fade(BLACK, 0.55f));
+    DrawRectangleRounded(panel, 0.08f, 10, HUD_PANEL_COLOR);
+    DrawRectangleRoundedLinesEx(panel, 0.08f, 10, 1.5f * scale, Fade(accent, 0.9f));
+    DrawLineEx((Vector2){ panel.x + 12.0f * scale, panel.y + 42.0f * scale },
+               (Vector2){ panel.x + panel.width - 12.0f * scale, panel.y + 42.0f * scale },
+               1.0f * scale, Fade(accent, 0.28f));
+}
+
+static void DrawKeyCap(const char *key, float x, float y, float width, float scale)
+{
+    Rectangle keyRect = { x, y, width, 29.0f * scale };
+    DrawRectangleRounded(keyRect, 0.14f, 5, (Color){ 13, 18, 48, 255 });
+    DrawRectangleRoundedLinesEx(keyRect, 0.14f, 5, 1.5f * scale, HUD_ACCENT_COLOR);
+    int size = ScaleFontSize(12.0f);
+    float textWidth = MeasureTextStrongSpaced(key, size, 1.0f * scale).x;
+    DrawTextStrongSpaced(key, (int)(x + (width - textWidth) * 0.5f), (int)(y + 7.0f * scale), size, 0.8f * scale, RAYWHITE, BLACK);
+}
+
+static float GetMapExploredPercent(void)
+{
+    int visibleCells = 0;
+    int playableCells = 0;
+
+    for (int y = 0; y < GRID_HEIGTH; y++)
+    {
+        for (int x = 0; x < GRID_WIDTH; x++)
+        {
+            if (grid[y][x] != CELL_WALL)
+            {
+                playableCells++;
+                Vector2 center = { ((float)x + 0.5f) * TILE_SIZE, ((float)y + 0.5f) * TILE_SIZE };
+                if (IsWorldPositionVisible(center))
+                {
+                    visibleCells++;
+                }
+            }
+        }
+    }
+
+    if (playableCells == 0) return 0.0f;
+    return ((float)visibleCells / (float)playableCells) * 100.0f;
+}
+
+static void DrawDashboardBackground(void)
+{
+    int w = GetScreenWidth();
+    int h = GetScreenHeight();
+
+    DrawRectangleGradientV(0, 0, w, h, (Color){ 3, 7, 28, 255 }, (Color){ 1, 3, 16, 255 });
+
+    float scale = GetUIScale();
+    Color circuit = Fade(HUD_BORDER_COLOR, 0.18f);
+
+    for (int i = 0; i < 7; i++)
+    {
+        float y = (70.0f + i * 92.0f) * scale;
+        if (y >= h) break;
+        DrawLineEx((Vector2){ 12.0f * scale, y }, (Vector2){ 120.0f * scale, y }, 1.0f, circuit);
+        DrawLineEx((Vector2){ (float)w - 120.0f * scale, y }, (Vector2){ (float)w - 12.0f * scale, y }, 1.0f, circuit);
+    }
+
+    DrawLineEx((Vector2){ 18.0f * scale, 84.0f * scale }, (Vector2){ (float)w - 18.0f * scale, 84.0f * scale }, 1.0f, Fade(HUD_BORDER_COLOR, 0.35f));
+    DrawCircleV((Vector2){ 18.0f * scale, 84.0f * scale }, 2.0f * scale, HUD_BORDER_COLOR);
+    DrawCircleV((Vector2){ (float)w - 18.0f * scale, 84.0f * scale }, 2.0f * scale, HUD_ACCENT_COLOR);
+}
+
+static void DrawDashboardHeader(void)
+{
+    float scale = GetUIScale();
+    float x = 24.0f * scale;
+    float y = 20.0f * scale;
+
+    if (IsCompactLayout())
+    {
+        float logoWidth = 245.0f * scale;
+        float logoX = ((float)GetScreenWidth() - logoWidth) * 0.5f;
+        DrawHudIcon((Vector2){ logoX + 12.0f * scale, y + 14.0f * scale }, 12.0f * scale, HUD_BORDER_COLOR);
+        DrawTextStrongFit("BYTEMAZE", (int)(logoX + 32.0f * scale), (int)(y + 1.0f * scale),
+                          ScaleFontSize(21.0f), 15, 0.8f * scale, logoWidth - 32.0f * scale,
+                          (Color){ 225, 240, 255, 255 }, BLACK);
+        return;
+    }
+
+    DrawHudIcon((Vector2){ x + 18.0f * scale, y + 18.0f * scale }, 16.0f * scale, HUD_BORDER_COLOR);
+    DrawTextStrongFit("BYTEMAZE", (int)(x + 43.0f * scale), (int)(y + 1.0f * scale),
+                      ScaleFontSize(27.0f), 18, 1.3f * scale, 300.0f * scale,
+                      (Color){ 225, 240, 255, 255 }, BLACK);
+
+    Rectangle version = { x + 188.0f * scale, y + 7.0f * scale, 94.0f * scale, 25.0f * scale };
+    DrawRectangleRounded(version, 0.16f, 6, (Color){ 14, 8, 50, 245 });
+    DrawRectangleRoundedLinesEx(version, 0.16f, 6, 1.0f * scale, HUD_ACCENT_COLOR);
+    DrawTextStrongFit("v0.9.8-BETA", (int)(version.x + 8.0f * scale), (int)(version.y + 5.0f * scale),
+                   ScaleFontSize(9.0f), 7, 0.5f * scale, version.width - 16.0f * scale, RAYWHITE, BLACK);
+}
 
 void DrawHud(void)
 {
-    /* Clear vertical rhythm: one purpose per row, a divider between the
-     * "brand" block and the stats block, and consistent left padding so
-     * nothing overlaps or crowds the row above/below it (the old layout
-     * used fixed y-values that collided once the title got bigger). */
     float scale = GetUIScale();
-    float panelX = 10.0f * scale;
-    float panelY = 58.0f * scale;
+
+    /* On narrow/short windows the HUD becomes a compact two-row layout:
+     * status + ammo above the maze, controls + health below it. This keeps
+     * every panel inside the window and gives the maze the most space. */
+    if (IsCompactLayout())
+    {
+        float margin = 10.0f * scale;
+        float gap = 8.0f * scale;
+        float availableWidth = (float)GetScreenWidth() - margin * 2.0f;
+        float halfWidth = (availableWidth - gap) * 0.5f;
+        float panelY = 96.0f * scale;
+        float panelH = 70.0f * scale;
+        float pad = 10.0f * scale;
+        int small = ScaleFontSize(8.0f);
+        int medium = ScaleFontSize(10.0f);
+        int large = ScaleFontSize(15.0f);
+
+        Rectangle status = { margin, panelY, halfWidth, panelH };
+        Rectangle weapon = { margin + halfWidth + gap, panelY, halfWidth, panelH };
+
+        DrawTechPanel(status, HUD_BORDER_COLOR);
+        DrawHudIcon((Vector2){ status.x + 16.0f * scale, status.y + 16.0f * scale }, 8.0f * scale, HUD_BORDER_COLOR);
+        DrawTextStrongFit("STATUS DO SISTEMA", (int)(status.x + 30.0f * scale), (int)(status.y + 8.0f * scale),
+                          medium, 7, 0.3f * scale, status.width - 40.0f * scale, HUD_BORDER_COLOR, BLACK);
+        DrawTextStrongSpaced("ROUND", (int)(status.x + pad), (int)(status.y + 36.0f * scale),
+                             small, 0.3f * scale, RAYWHITE, BLACK);
+        DrawTextStrongFit(TextFormat("%d", inTutorialSequence ? tutorialRound : officialRound),
+                          (int)(status.x + pad), (int)(status.y + 47.0f * scale), large, 8, 0.3f * scale,
+                          status.width - 2.0f * pad, (Color){ 105, 180, 255, 255 }, BLACK);
+
+        DrawTechPanel(weapon, HUD_BORDER_COLOR);
+        DrawHudIcon((Vector2){ weapon.x + 16.0f * scale, weapon.y + 16.0f * scale }, 8.0f * scale, HUD_BORDER_COLOR);
+        DrawTextStrongFit("ARMAMENTO", (int)(weapon.x + 30.0f * scale), (int)(weapon.y + 8.0f * scale),
+                          medium, 7, 0.3f * scale, weapon.width - 40.0f * scale, HUD_BORDER_COLOR, BLACK);
+        DrawTextStrongSpaced("BALAS", (int)(weapon.x + pad), (int)(weapon.y + 36.0f * scale),
+                             small, 0.3f * scale, (Color){ 150, 190, 240, 255 }, BLACK);
+        DrawTextStrongFit(TextFormat("%d / %d", playerAmmo, PLAYER_MAX_AMMO),
+                          (int)(weapon.x + weapon.width - 65.0f * scale), (int)(weapon.y + 31.0f * scale),
+                          medium, 7, 0.3f * scale, 55.0f * scale, RAYWHITE, BLACK);
+        DrawSegmentedBar(weapon.x + pad, weapon.y + 51.0f * scale, weapon.width - 2.0f * pad, 8.0f * scale,
+                         PLAYER_MAX_AMMO, playerAmmo, (Color){ 45, 195, 255, 255 }, (Color){ 20, 35, 66, 255 }, scale);
+
+        float bottomY = (float)GetScreenHeight() - 78.0f * scale;
+        Rectangle vital = { margin, bottomY, halfWidth, 68.0f * scale };
+        Rectangle controls = { margin + halfWidth + gap, bottomY, halfWidth, 68.0f * scale };
+
+        DrawTechPanel(vital, HUD_ACCENT_COLOR);
+        DrawHudIcon((Vector2){ vital.x + 16.0f * scale, vital.y + 16.0f * scale }, 8.0f * scale, HUD_ACCENT_COLOR);
+        DrawTextStrongFit("VITAL DO NUCLEO", (int)(vital.x + 30.0f * scale), (int)(vital.y + 8.0f * scale),
+                          medium, 7, 0.25f * scale, vital.width - 40.0f * scale, HUD_ACCENT_COLOR, BLACK);
+        DrawTextStrongSpaced("VIDA", (int)(vital.x + pad), (int)(vital.y + 34.0f * scale),
+                             small, 0.3f * scale, (Color){ 150, 190, 240, 255 }, BLACK);
+        DrawTextStrongFit(TextFormat("%d/%d", playerHealth, PLAYER_MAX_HEALTH),
+                          (int)(vital.x + 48.0f * scale), (int)(vital.y + 30.0f * scale), medium, 7, 0.25f * scale,
+                          vital.width - 58.0f * scale, RAYWHITE, BLACK);
+        DrawSegmentedBar(vital.x + pad, vital.y + 50.0f * scale, vital.width - 2.0f * pad, 8.0f * scale,
+                         10, (int)ceilf(((float)playerHealth / PLAYER_MAX_HEALTH) * 10.0f),
+                         (Color){ 190, 70, 255, 255 }, (Color){ 35, 25, 60, 255 }, scale);
+
+        DrawTechPanel(controls, HUD_ACCENT_COLOR);
+        DrawHudIcon((Vector2){ controls.x + 16.0f * scale, controls.y + 16.0f * scale }, 8.0f * scale, HUD_ACCENT_COLOR);
+        DrawTextStrongFit("CONTROLES", (int)(controls.x + 30.0f * scale), (int)(controls.y + 8.0f * scale),
+                          medium, 7, 0.25f * scale, controls.width - 40.0f * scale, HUD_ACCENT_COLOR, BLACK);
+        DrawKeyCap("ESPACO", controls.x + pad, controls.y + 31.0f * scale, 54.0f * scale, scale);
+        DrawTextStrongFit("ATIRAR", (int)(controls.x + 70.0f * scale), (int)(controls.y + 34.0f * scale),
+                          small, 7, 0.2f * scale, controls.width - 78.0f * scale, RAYWHITE, BLACK);
+        DrawKeyCap("R", controls.x + pad, controls.y + 50.0f * scale, 28.0f * scale, scale);
+        DrawTextStrongFit("RECARREGAR", (int)(controls.x + 48.0f * scale), (int)(controls.y + 53.0f * scale),
+                          small, 7, 0.15f * scale, controls.width - 56.0f * scale, RAYWHITE, BLACK);
+
+        return;
+    }
+
+    float leftX = 10.0f * scale;
     float panelWidth = GetHudPanelWidth();
-    float padding = 16.0f * scale;
-    float textX = panelX + padding;
-    float contentWidth = panelWidth - (padding * 2.0f);
-    float rowY = panelY + padding;
-    float rowGapSmall = 9.0f * scale;
-    float rowGap = 24.0f * scale;
-    float dividerInset = 10.0f * scale;
-    float panelHeight = currentRoundConfig.flashlightEnabled ? 484.0f * scale : 412.0f * scale;
-    int titleFontSize = ScaleFontSize(25.0f);
-    int metricFontSize = ScaleFontSize(15.0f);
-    int mediumFontSize = ScaleFontSize(18.0f);
-    int progressFontSize = ScaleFontSize(20.0f);
+    float gap = 10.0f * scale;
+    float y = 104.0f * scale;
+    float panelHeight = 132.0f * scale;
+    float pad = 14.0f * scale;
+    float contentWidth = panelWidth - 2.0f * pad;
+    int small = ScaleFontSize(10.0f);
+    int medium = ScaleFontSize(13.0f);
+    int large = ScaleFontSize(18.0f);
 
-    Rectangle panel = { panelX, panelY, panelWidth, panelHeight };
+    Rectangle status = { leftX, y, panelWidth, panelHeight };
+    DrawTechPanel(status, HUD_BORDER_COLOR);
+    DrawHudIcon((Vector2){ status.x + 22.0f * scale, status.y + 20.0f * scale }, 10.0f * scale, HUD_BORDER_COLOR);
+    DrawTextStrongFit("STATUS DO SISTEMA", (int)(status.x + 40.0f * scale), (int)(status.y + 13.0f * scale),
+                   medium, ScaleFontSize(9.0f), 0.35f * scale, panelWidth - 54.0f * scale,
+                   HUD_BORDER_COLOR, BLACK);
+    DrawTextStrongSpaced("DADOS PRINCIPAIS", (int)(status.x + pad), (int)(status.y + 55.0f * scale),
+                   small, 0.4f * scale, (Color){ 150, 190, 240, 255 }, BLACK);
+    DrawTextStrongSpaced("ROUND", (int)(status.x + pad), (int)(status.y + 75.0f * scale),
+                   small, 0.5f * scale, RAYWHITE, BLACK);
+    DrawTextStrongFit(TextFormat("%d", inTutorialSequence ? tutorialRound : officialRound),
+                      (int)(status.x + pad), (int)(status.y + 89.0f * scale),
+                      large, 10, 0.6f * scale, contentWidth,
+                      (Color){ 105, 180, 255, 255 }, BLACK);
 
-    DrawRectangleRounded(panel, 0.06f, 10, HUD_PANEL_COLOR);
-    DrawRectangleRoundedLinesEx(panel, 0.06f, 10, 2.0f * scale, HUD_BORDER_COLOR);
+    y += panelHeight + gap;
+    Rectangle log = { leftX, y, panelWidth, 145.0f * scale };
+    DrawTechPanel(log, HUD_ACCENT_COLOR);
+    DrawHudIcon((Vector2){ log.x + 22.0f * scale, log.y + 20.0f * scale }, 10.0f * scale, HUD_ACCENT_COLOR);
+    DrawTextStrongFit("LOG DE DADOS", (int)(log.x + 40.0f * scale), (int)(log.y + 13.0f * scale),
+                   medium, ScaleFontSize(9.0f), 0.35f * scale, panelWidth - 54.0f * scale,
+                   HUD_ACCENT_COLOR, BLACK);
+    DrawTextStrongSpaced("EXECUTAVEL", (int)(log.x + pad), (int)(log.y + 55.0f * scale),
+                   small, 0.4f * scale, (Color){ 150, 190, 240, 255 }, BLACK);
+    DrawTextStrongFit(TextFormat("%lld bytes", executableSizeBytes), (int)(log.x + pad), (int)(log.y + 73.0f * scale),
+                      ScaleFontSize(13.0f), 9, 0.3f * scale, contentWidth, RAYWHITE, BLACK);
+    DrawTextStrongFit(TextFormat("%.2f%% LIMITE", executableUsagePercent), (int)(log.x + pad), (int)(log.y + 94.0f * scale),
+                      medium, 9, 0.5f * scale, contentWidth, (Color){ 80, 220, 255, 255 }, BLACK);
+    DrawSegmentedBar(log.x + pad, log.y + 119.0f * scale, contentWidth, 8.0f * scale,
+                     10, (int)ceilf(fminf(executableUsagePercent, 100.0f) / 10.0f),
+                     (Color){ 50, 205, 255, 255 }, (Color){ 18, 28, 60, 255 }, scale);
 
-    /* Title row */
-    float iconRadius = 11.0f * scale;
-    Vector2 iconCenter = { textX + iconRadius, rowY + iconRadius * 0.85f };
-    DrawHudIcon(iconCenter, iconRadius, HUD_BORDER_COLOR);
-    DrawTextStrongFit("BYTEMAZE", (int)(textX + iconRadius * 2.6f), (int)rowY, titleFontSize, 16, 1.5f * scale, contentWidth - iconRadius * 2.6f, (Color){ 120, 235, 255, 255 }, BLACK);
-    rowY += 34.0f * scale;
-    DrawTextStrongFit(TextFormat("%lld bytes   %.2f%%", executableSizeBytes, executableUsagePercent), (int)textX, (int)rowY, metricFontSize, 10, 1.0f * scale, contentWidth, LIGHTGRAY, BLACK);
-    rowY += 26.0f * scale;
+    y += log.height + gap;
+    Rectangle vital = { leftX, y, panelWidth, 145.0f * scale };
+    DrawTechPanel(vital, HUD_ACCENT_COLOR);
+    DrawHudIcon((Vector2){ vital.x + 22.0f * scale, vital.y + 20.0f * scale }, 10.0f * scale, HUD_ACCENT_COLOR);
+    DrawTextStrongFit("VITAL DO NUCLEO", (int)(vital.x + 40.0f * scale), (int)(vital.y + 13.0f * scale),
+                   medium, ScaleFontSize(9.0f), 0.35f * scale, panelWidth - 54.0f * scale,
+                   HUD_ACCENT_COLOR, BLACK);
+    DrawTextStrongSpaced("VIDA", (int)(vital.x + pad), (int)(vital.y + 57.0f * scale),
+                   small, 0.5f * scale, (Color){ 150, 190, 240, 255 }, BLACK);
+    DrawTextStrongFit(TextFormat("%d/%d", playerHealth, PLAYER_MAX_HEALTH),
+                      (int)(vital.x + pad), (int)(vital.y + 74.0f * scale),
+                      medium, 9, 0.5f * scale, contentWidth, RAYWHITE, BLACK);
+    DrawSegmentedBar(vital.x + pad, vital.y + 103.0f * scale, contentWidth, 12.0f * scale,
+                     10, (int)ceilf(((float)playerHealth / PLAYER_MAX_HEALTH) * 10.0f),
+                     (Color){ 190, 70, 255, 255 }, (Color){ 35, 25, 60, 255 }, scale);
 
-    DrawLineEx((Vector2){ panelX + dividerInset, rowY }, (Vector2){ panelX + panelWidth - dividerInset, rowY }, 1.0f * scale, Fade(HUD_BORDER_COLOR, 0.4f));
-    rowY += 14.0f * scale;
+    float rightWidth = GetHudRightPanelWidth();
+    float rightX = (float)GetScreenWidth() - rightWidth - (10.0f * scale);
 
-    /* Progress row */
-    DrawTextStrongFit(TextFormat(T(TEXT_BEST_ROUND), bestOfficialRound), (int)textX, (int)rowY, mediumFontSize, 11, 1.0f * scale, contentWidth, (Color){ 190, 90, 255, 255 }, BLACK);
-    rowY += 25.0f * scale;
-    DrawTextStrongFit(inTutorialSequence ? TextFormat(T(TEXT_TUTORIAL_PROGRESS), tutorialRound) : TextFormat(T(TEXT_ROUND_PROGRESS), officialRound), (int)textX, (int)rowY, progressFontSize, 12, 1.0f * scale, contentWidth, RAYWHITE, BLACK);
-    rowY += 49.0f * scale;
-
-    /* Health row (label is drawn above its own bar inside the function) */
-    DrawPlayerHealthBar(textX, rowY, fminf(250.0f * scale, contentWidth), scale);
-    rowY += 43.0f * scale;
-
-    DrawLineEx((Vector2){ panelX + dividerInset, rowY }, (Vector2){ panelX + panelWidth - dividerInset, rowY }, 1.0f * scale, Fade(HUD_BORDER_COLOR, 0.4f));
-    rowY += 14.0f * scale;
-
-    /* Controls row */
-    DrawTextStrongFit(T(TEXT_SHOOT), (int)textX, (int)rowY, progressFontSize, 12, 1.0f * scale, contentWidth, (Color){ 190, 90, 255, 255 }, BLACK);
-    rowY += 28.0f * scale;
-    DrawTextStrongFit(TextFormat(T(TEXT_AMMO), playerAmmo, PLAYER_MAX_AMMO), (int)textX, (int)rowY, mediumFontSize, 11, 1.0f * scale, contentWidth, RAYWHITE, BLACK);
-    rowY += 21.0f * scale;
-    DrawSegmentedBar(textX, rowY, fminf(250.0f * scale, contentWidth), 12.0f * scale, PLAYER_MAX_AMMO, playerAmmo, (Color){ 80, 200, 255, 255 }, (Color){ 30, 34, 52, 255 }, scale);
-    rowY += 24.0f * scale;
-    if (playerReloadTimer > 0.0f)
-    {
-        DrawTextStrongFit(TextFormat(T(TEXT_RELOADING), playerReloadTimer), (int)textX, (int)rowY, mediumFontSize, 11, 1.0f * scale, contentWidth, YELLOW, BLACK);
-    }
-    else
-    {
-        DrawTextStrongFit(T(TEXT_RELOAD), (int)textX, (int)rowY, mediumFontSize, 11, 1.0f * scale, contentWidth, SKYBLUE, BLACK);
-    }
-    rowY += rowGap;
+    Rectangle weapon = { rightX, 122.0f * scale, rightWidth, 180.0f * scale };
+    DrawTechPanel(weapon, HUD_BORDER_COLOR);
+    DrawHudIcon((Vector2){ weapon.x + 22.0f * scale, weapon.y + 20.0f * scale }, 10.0f * scale, HUD_BORDER_COLOR);
+    DrawTextStrongFit("ARMAMENTO", (int)(weapon.x + 40.0f * scale), (int)(weapon.y + 13.0f * scale),
+                   medium, ScaleFontSize(9.0f), 0.35f * scale, rightWidth - 54.0f * scale,
+                   HUD_BORDER_COLOR, BLACK);
+    DrawTextStrongSpaced("BALAS", (int)(weapon.x + pad), (int)(weapon.y + 61.0f * scale),
+                   small, 0.4f * scale, (Color){ 150, 190, 240, 255 }, BLACK);
+    DrawTextStrongFit(TextFormat("%d / %d", playerAmmo, PLAYER_MAX_AMMO),
+                      (int)(weapon.x + weapon.width - 78.0f * scale), (int)(weapon.y + 55.0f * scale),
+                      medium, 8, 0.4f * scale, 66.0f * scale, RAYWHITE, BLACK);
+    DrawSegmentedBar(weapon.x + pad, weapon.y + 84.0f * scale, contentWidth, 12.0f * scale,
+                     PLAYER_MAX_AMMO, playerAmmo, (Color){ 45, 195, 255, 255 }, (Color){ 20, 35, 66, 255 }, scale);
+    Rectangle controls = { rightX, 314.0f * scale, rightWidth, 220.0f * scale };
+    DrawTechPanel(controls, HUD_ACCENT_COLOR);
+    DrawHudIcon((Vector2){ controls.x + 22.0f * scale, controls.y + 20.0f * scale }, 10.0f * scale, HUD_ACCENT_COLOR);
+    DrawTextStrongFit("CONTROLES DO TERMINAL", (int)(controls.x + 40.0f * scale), (int)(controls.y + 12.0f * scale),
+                   ScaleFontSize(9.0f), ScaleFontSize(6.0f), 0.2f * scale, rightWidth - 54.0f * scale,
+                   HUD_ACCENT_COLOR, BLACK);
+    DrawTextStrongSpaced("ATIRAR", (int)(controls.x + pad), (int)(controls.y + 56.0f * scale),
+                   small, 0.4f * scale, (Color){ 150, 190, 240, 255 }, BLACK);
+    DrawKeyCap("ESPACO", controls.x + pad, controls.y + 75.0f * scale, 62.0f * scale, scale);
+    DrawTextStrongSpaced("Disparo laser", (int)(controls.x + 84.0f * scale), (int)(controls.y + 82.0f * scale),
+                   small, 0.35f * scale, RAYWHITE, BLACK);
+    DrawTextStrongSpaced("RECARREGAR", (int)(controls.x + pad), (int)(controls.y + 122.0f * scale),
+                   small, 0.35f * scale, (Color){ 150, 190, 240, 255 }, BLACK);
+    DrawKeyCap("R", controls.x + pad, controls.y + 141.0f * scale, 34.0f * scale, scale);
+    DrawTextStrongSpaced("Preencher balas", (int)(controls.x + 62.0f * scale), (int)(controls.y + 148.0f * scale),
+                   small, 0.35f * scale, RAYWHITE, BLACK);
 
     if (currentRoundConfig.flashlightEnabled)
     {
-        DrawTextStrongFit(T(TEXT_FLASHLIGHT_CONTROL), (int)textX, (int)rowY, mediumFontSize, 11, 1.0f * scale, contentWidth, (Color){ 190, 90, 255, 255 }, BLACK);
-        rowY += rowGapSmall + (15.0f * scale);
-        DrawTextStrongFit(TextFormat(T(TEXT_FLASHLIGHT_STATE), flashlightOn ? T(TEXT_FLASHLIGHT_ON) : T(TEXT_FLASHLIGHT_OFF)), (int)textX, (int)rowY, mediumFontSize, 11, 1.0f * scale, contentWidth, flashlightOn ? (Color){ 80, 230, 255, 255 } : GRAY, BLACK);
-        rowY += rowGapSmall + (15.0f * scale);
-        DrawTextStrongFit(TextFormat(T(TEXT_BATTERY), flashlightBattery), (int)textX, (int)rowY, mediumFontSize, 11, 1.0f * scale, contentWidth, (Color){ 80, 230, 255, 255 }, BLACK);
-        rowY += rowGap;
+        DrawTextStrongSpaced("LANTERNA", (int)(controls.x + pad), (int)(controls.y + 184.0f * scale),
+                       small, 0.35f * scale, HUD_ACCENT_COLOR, BLACK);
+        DrawKeyCap("C", controls.x + 78.0f * scale, controls.y + 178.0f * scale, 34.0f * scale, scale);
     }
+
+    float explored = GetMapExploredPercent();
+    DrawTextStrongFit(TextFormat("MAPA %.2f%%", explored),
+                      (int)(leftX + 110.0f * scale), (int)(status.y + 105.0f * scale),
+                      ScaleFontSize(9.0f), 7, 0.3f * scale, 62.0f * scale,
+                      (Color){ 80, 220, 255, 255 }, BLACK);
 
 }
 
@@ -3232,11 +3554,11 @@ void DrawGameOverOverlay(void)
     int buttonTextWidth = (int)MeasureTextStrongSpaced(buttonText, buttonFontSize, 1.0f * scale).x;
     Vector2 mousePosition = GetMousePosition();
     bool isButtonHovered = CheckCollisionPointRec(mousePosition, button);
-    Color buttonColor = isButtonHovered ? LIME : GREEN;
+    Color buttonColor = isButtonHovered ? (Color){ 110, 235, 255, 255 } : (Color){ 28, 92, 190, 255 };
 
     DrawRectangle(0, 0, screenWidth, screenHeight, Fade(BLACK, 0.55f));
-    DrawRectangleRounded(panel, 0.12f, 12, (Color){ 24, 24, 24, 235 });
-    DrawRectangleRoundedLinesEx(panel, 0.12f, 12, 3.0f * scale, GREEN);
+    DrawRectangleRounded(panel, 0.12f, 12, (Color){ 7, 13, 38, 245 });
+    DrawRectangleRoundedLinesEx(panel, 0.12f, 12, 3.0f * scale, HUD_ACCENT_COLOR);
     DrawTextStrong(title, (int)(panel.x + (panel.width - titleWidth) * 0.5f), (int)(panel.y + 44.0f * scale), titleFontSize, RAYWHITE, BLACK);
     DrawRectangleRounded(button, 0.3f, 12, buttonColor);
     DrawTextStrong(buttonText, (int)(button.x + (button.width - buttonTextWidth) * 0.5f), (int)(button.y + 16.0f * scale), buttonFontSize, BLACK, Fade(WHITE, 0.25f));
@@ -3253,10 +3575,10 @@ void DrawPlayer(void)
     Vector2 offset = GetMazeOffset(scale);
     Vector2 center = WorldToScreenPosition(player.position, scale, offset);
     float drawRadius = fmaxf(player.radius * scale * 1.1f, 8.0f);
-    Color playerCore = ORANGE;
+    Color playerCore = (Color){ 255, 185, 55, 255 };
     Color playerEdge = (Color){ 255, 235, 200, 255 };
     Color playerOuter = (Color){ 40, 18, 0, 255 };
-    Color playerGlow = (Color){ 255, 135, 0, 255 };
+    Color playerGlow = (Color){ 80, 220, 255, 255 };
 
     Vector2 tip = {
         center.x + (cosf(player.facingAngle) * drawRadius * 1.2f),
@@ -3387,7 +3709,7 @@ void DrawBullets(void)
 
         Vector2 center = WorldToScreenPosition(bullets[i].position, scale, offset);
         float drawRadius = fmaxf(bullets[i].radius * scale, 3.0f);
-        Color bulletColor = bullets[i].fromPlayer ? ORANGE : SKYBLUE;
+        Color bulletColor = bullets[i].fromPlayer ? (Color){ 255, 190, 65, 255 } : SKYBLUE;
 
         if (bullets[i].fromBoss)
         {
@@ -3600,7 +3922,7 @@ void DrawContinueButton(Rectangle continueButton)
     float scale = GetUIScale();
     Vector2 mousePosition = GetMousePosition();
     bool continueHovered = CheckCollisionPointRec(mousePosition, continueButton);
-    Color continueFill = continueHovered ? LIME : (Color){ 0, 170, 70, 255 };
+    Color continueFill = continueHovered ? (Color){ 100, 235, 255, 255 } : (Color){ 24, 74, 170, 255 };
     int continueFontSize = ScaleFontSize(18.0f);
 
     DrawRectangleRounded(continueButton, 0.28f, 10, continueFill);
@@ -3623,7 +3945,7 @@ void DrawPanelButtons(Rectangle panel)
     float scale = GetUIScale();
     Vector2 mousePosition = GetMousePosition();
     bool skipHovered = CheckCollisionPointRec(mousePosition, skipButton);
-    Color skipFill = skipHovered ? (Color){ 35, 120, 60, 255 } : (Color){ 22, 72, 40, 255 };
+    Color skipFill = skipHovered ? (Color){ 55, 72, 155, 255 } : (Color){ 17, 30, 78, 255 };
     int skipFontSize = ScaleFontSize(17.0f);
 
     DrawRectangleRounded(skipButton, 0.28f, 10, skipFill);
@@ -3659,9 +3981,9 @@ void DrawRoundPanel(const char *title, const char *body, const char *footer)
     Rectangle panel = GetRoundPanelRect(title, body, footer);
 
     DrawRectangle(0, 0, screenWidth, screenHeight, Fade(BLACK, 0.78f));
-    DrawRectangleRounded(panel, 0.08f, 12, (Color){ 18, 18, 18, 245 });
-    DrawRectangleRoundedLinesEx(panel, 0.08f, 12, 3.0f * scale, GREEN);
-    DrawTextStrong(title, (int)(panel.x + (panel.width - titleWidth) * 0.5f), (int)(panel.y + 26.0f * scale), titleFontSize, GREEN, BLACK);
+    DrawRectangleRounded(panel, 0.08f, 12, (Color){ 6, 12, 36, 245 });
+    DrawRectangleRoundedLinesEx(panel, 0.08f, 12, 3.0f * scale, HUD_BORDER_COLOR);
+    DrawTextStrong(title, (int)(panel.x + (panel.width - titleWidth) * 0.5f), (int)(panel.y + 26.0f * scale), titleFontSize, HUD_BORDER_COLOR, BLACK);
     DrawTextStrongSpaced(wrappedBody, (int)(panel.x + 28.0f * scale), (int)(panel.y + bodyTop), bodyFontSize, bodySpacing, RAYWHITE, BLACK);
     DrawTextStrongSpaced(wrappedFooter, (int)(panel.x + 28.0f * scale), (int)(panel.y + bodyTop + bodySize.y + footerGap), footerFontSize, footerSpacing, LIGHTGRAY, BLACK);
 
@@ -3788,7 +4110,8 @@ int main(int argc, char *argv[])
         }
 
         BeginDrawing();
-        ClearBackground(BLACK);
+        DrawDashboardBackground();
+        DrawDashboardHeader();
 
         if (gamePhase == PHASE_PLAYING)
         {
