@@ -73,18 +73,38 @@ int playerAmmo = PLAYER_MAX_AMMO;
 float playerReloadTimer = 0.0f;
 float playerDamageCooldown = 0.0f;
 
-Color HUD_PANEL_COLOR = { 10, 10, 10, 220 };
-Color HUD_BORDER_COLOR = { 0, 255, 70, 255 };
-Color MAZE_WALL_COLOR = { 56, 64, 72, 255 };
-Color MAZE_PATH_COLOR = { 238, 240, 235, 255 };
-Color MAZE_SHADOW_COLOR = { 16, 18, 20, 255 };
-Color MAZE_EXIT_COLOR = { 0, 230, 70, 255 };
+Color HUD_PANEL_COLOR = { 8, 10, 22, 225 };
+Color HUD_BORDER_COLOR = { 60, 210, 255, 255 };
+Color HUD_ACCENT_COLOR = { 190, 90, 255, 255 };
+Color MAZE_WALL_COLOR = { 20, 22, 36, 255 };
+Color MAZE_PATH_COLOR = { 235, 240, 250, 255 };
+Color MAZE_SHADOW_COLOR = { 8, 9, 18, 255 };
+Color MAZE_EXIT_COLOR = { 60, 230, 130, 255 };
+
+float GetUIScale(void);
+
+/* The HUD panel's width is fixed (not shrunk to fit leftover space) so
+ * its text never has to compress past its readable floor and overflow
+ * the border. The maze reserves this much on the left when it lays
+ * itself out, so there's always room and the panel never overlaps it. */
+float GetHudPanelWidth(void)
+{
+    float scale = GetUIScale();
+    return fminf((float)GetScreenWidth() - (20.0f * scale), 408.0f * scale);
+}
+
+float GetMazeLeftReservedWidth(void)
+{
+    float scale = GetUIScale();
+    return (10.0f * scale) + GetHudPanelWidth() + (20.0f * scale);
+}
 
 float GetMazeScale(void)
 {
     float mazeWidth = (float)(GRID_WIDTH * TILE_SIZE);
     float mazeHeight = (float)(GRID_HEIGTH * TILE_SIZE);
-    float availableWidth = (float)GetScreenWidth() - (MAZE_PADDING * 2.0f);
+    float leftReserved = GetMazeLeftReservedWidth();
+    float availableWidth = (float)GetScreenWidth() - leftReserved - MAZE_PADDING;
     float availableHeight = (float)GetScreenHeight() - HUD_HEIGHT - (MAZE_PADDING * 2.0f);
     float scaleX = availableWidth / mazeWidth;
     float scaleY = availableHeight / mazeHeight;
@@ -95,11 +115,12 @@ Vector2 GetMazeOffset(float scale)
 {
     float mazeWidth = (float)(GRID_WIDTH * TILE_SIZE) * scale;
     float mazeHeight = (float)(GRID_HEIGTH * TILE_SIZE) * scale;
-    float freeWidth = (float)GetScreenWidth() - mazeWidth;
+    float leftReserved = GetMazeLeftReservedWidth();
+    float freeWidth = (float)GetScreenWidth() - leftReserved - mazeWidth;
     float freeHeight = (float)GetScreenHeight() - HUD_HEIGHT - mazeHeight;
 
     Vector2 offset = { 0 };
-    offset.x = freeWidth * 0.5f;
+    offset.x = leftReserved + (freeWidth * 0.5f);
     offset.y = HUD_HEIGHT + (freeHeight * 0.5f);
     return offset;
 }
@@ -310,7 +331,7 @@ typedef enum GamePhase
 typedef enum Language
 {
     LANGUAGE_PT_BR,
-    LANGUAGE_PT_PT,
+    LANGUAGE_ES,
     LANGUAGE_EN,
     LANGUAGE_KO,
     LANGUAGE_COUNT
@@ -417,28 +438,28 @@ const char *uiText[LANGUAGE_COUNT][TEXT_COUNT] = {
         [TEXT_INTRO_FOOTER] = "Escolha um idioma acima e continue abaixo.",
         [TEXT_ROUND_FOOTER] = "Clique em Continuar para jogar este passo."
     },
-    [LANGUAGE_PT_PT] = {
-        [TEXT_LANGUAGE_NAME] = "PT-PT",
-        [TEXT_LANGUAGE_BUTTON] = "PT-PT",
-        [TEXT_BEST_ROUND] = "Recorde pessoal: ronda %d",
+    [LANGUAGE_ES] = {
+        [TEXT_LANGUAGE_NAME] = "ES",
+        [TEXT_LANGUAGE_BUTTON] = "ES",
+        [TEXT_BEST_ROUND] = "Mejor marca: ronda %d",
         [TEXT_TUTORIAL_PROGRESS] = "Tutorial %d/4",
         [TEXT_ROUND_PROGRESS] = "Ronda %d",
         [TEXT_HEALTH] = "Vida: %d/%d",
-        [TEXT_SHOOT] = "Disparar: ESPACO",
+        [TEXT_SHOOT] = "Disparar: ESPACIO",
         [TEXT_AMMO] = "Balas: %d/%d",
-        [TEXT_RELOADING] = "A recarregar: %.1fs",
-        [TEXT_RELOAD] = "Recarregar: R",
-        [TEXT_FLASHLIGHT_CONTROL] = "Lanterna: C",
-        [TEXT_FLASHLIGHT_STATE] = "Lanterna: %s",
-        [TEXT_FLASHLIGHT_ON] = "ligada",
-        [TEXT_FLASHLIGHT_OFF] = "desligada",
+        [TEXT_RELOADING] = "Recargando: %.1fs",
+        [TEXT_RELOAD] = "Recargar: R",
+        [TEXT_FLASHLIGHT_CONTROL] = "Linterna: C",
+        [TEXT_FLASHLIGHT_STATE] = "Linterna: %s",
+        [TEXT_FLASHLIGHT_ON] = "encendida",
+        [TEXT_FLASHLIGHT_OFF] = "apagada",
         [TEXT_BATTERY] = "Bateria: %.0f%%",
-        [TEXT_GAME_OVER] = "MORRESTE",
-        [TEXT_PLAY_AGAIN] = "JOGAR DE NOVO",
+        [TEXT_GAME_OVER] = "HAS MUERTO",
+        [TEXT_PLAY_AGAIN] = "JUGAR DE NUEVO",
         [TEXT_SKIP_TUTORIAL] = "Saltar tutorial",
         [TEXT_CONTINUE_TUTORIAL] = "Continuar",
-        [TEXT_INTRO_FOOTER] = "Escolhe um idioma acima e continua abaixo.",
-        [TEXT_ROUND_FOOTER] = "Clica em Continuar para jogar este passo."
+        [TEXT_INTRO_FOOTER] = "Elige un idioma arriba y continua abajo.",
+        [TEXT_ROUND_FOOTER] = "Haz clic en Continuar para jugar este paso."
     },
     [LANGUAGE_EN] = {
         [TEXT_LANGUAGE_NAME] = "EN",
@@ -901,12 +922,6 @@ void DrawMixedLine(Font latinFont, Font cjkFont, const char *line, Vector2 posit
         glyphBuf[copyLen] = '\0';
 
         DrawTextEx(font, glyphBuf, (Vector2){ x, drawY }, drawFontSize, 0.0f, currentDrawColor);
-        if (isHangul)
-        {
-            DrawTextEx(font, glyphBuf, (Vector2){ x + 1.0f, drawY }, drawFontSize, 0.0f, currentDrawColor);
-            DrawTextEx(font, glyphBuf, (Vector2){ x, drawY + 1.0f }, drawFontSize, 0.0f, currentDrawColor);
-            DrawTextEx(font, glyphBuf, (Vector2){ x + 1.0f, drawY + 1.0f }, drawFontSize, 0.0f, currentDrawColor);
-        }
         Vector2 glyphSize = MeasureTextEx(font, glyphBuf, drawFontSize, 0.0f);
         x += glyphSize.x + glyphSpacing;
 
@@ -1056,11 +1071,14 @@ void DrawLanguageFlag(Language language, Rectangle bounds)
         DrawCircleV(center, bounds.height * 0.26f, (Color){ 20, 65, 160, 255 });
         DrawLineEx((Vector2){ center.x - bounds.width * 0.12f, center.y - 1.0f }, (Vector2){ center.x + bounds.width * 0.12f, center.y + 1.0f }, 2.0f, RAYWHITE);
     }
-    else if (language == LANGUAGE_PT_PT)
+    else if (language == LANGUAGE_ES)
     {
-        DrawRectangleRec((Rectangle){ bounds.x, bounds.y, bounds.width * 0.42f, bounds.height }, (Color){ 0, 120, 60, 255 });
-        DrawRectangleRec((Rectangle){ bounds.x + bounds.width * 0.42f, bounds.y, bounds.width * 0.58f, bounds.height }, (Color){ 210, 20, 45, 255 });
-        DrawCircle((int)(bounds.x + bounds.width * 0.42f), (int)(bounds.y + bounds.height * 0.5f), bounds.height * 0.22f, GOLD);
+        Color spainRed = (Color){ 173, 21, 35, 255 };
+        Color spainYellow = (Color){ 255, 196, 0, 255 };
+        DrawRectangleRec((Rectangle){ bounds.x, bounds.y, bounds.width, bounds.height * 0.25f }, spainRed);
+        DrawRectangleRec((Rectangle){ bounds.x, bounds.y + bounds.height * 0.25f, bounds.width, bounds.height * 0.5f }, spainYellow);
+        DrawRectangleRec((Rectangle){ bounds.x, bounds.y + bounds.height * 0.75f, bounds.width, bounds.height * 0.25f }, spainRed);
+        DrawRectangleRec((Rectangle){ bounds.x + bounds.width * 0.14f, bounds.y + bounds.height * 0.32f, bounds.width * 0.18f, bounds.height * 0.36f }, Fade(spainRed, 0.85f));
     }
     else if (language == LANGUAGE_EN)
     {
@@ -1988,13 +2006,13 @@ const char *GetIntroBody(void)
                "Enemies remove health, shots can knock them out for 5 seconds.\n"
                "Each tutorial step introduces one part of the game.";
     }
-    if (currentLanguage == LANGUAGE_PT_PT)
+    if (currentLanguage == LANGUAGE_ES)
     {
-        return "Objetivo: leva o triangulo amarelo ate a saida verde.\n"
-               "Move com WASD ou setas.\n"
-               "Dispara com ESPACO, recarrega com R e usa os botoes do topo para idioma.\n"
-               "Inimigos tiram vida; tiros podem nocautea-los por 5 segundos.\n"
-               "Cada tutorial apresenta uma parte do jogo.";
+        return "Objetivo: lleva el triangulo amarillo hasta la salida verde.\n"
+               "Muevete con WASD o las flechas.\n"
+               "Dispara con ESPACIO, recarga con R y usa los botones de arriba para el idioma.\n"
+               "Los enemigos quitan vida; los disparos pueden dejarlos K.O. por 5 segundos.\n"
+               "Cada tutorial presenta una parte del juego.";
     }
     if (currentLanguage == LANGUAGE_KO)
     {
@@ -2020,7 +2038,7 @@ const char *GetRoundInfoTitle(void)
     }
 
     if (currentLanguage == LANGUAGE_KO) return TextFormat("라운드 %d", officialRound);
-    if (currentLanguage == LANGUAGE_PT_PT) return TextFormat("RONDA %d", officialRound);
+    if (currentLanguage == LANGUAGE_ES) return TextFormat("RONDA %d", officialRound);
     return TextFormat("ROUND %d", officialRound);
 }
 
@@ -2042,6 +2060,13 @@ const char *GetRoundInfoBody(void)
             if (tutorialRound == 3) return "손전등을 사용할 수 있습니다.\nC로 켜고 끕니다. 더 넓게 보이지만 배터리를 소모합니다.\n튜토리얼 라운드는 항상 배터리 100퍼센트로 시작합니다.\n모퉁이와 출구를 확인할 때 짧게 사용하세요.";
             return "보라색 사각형은 보스입니다.\n플레이어를 찾아오고, 일직선이면 쏘며, 멀어지면 빨라집니다.\n보스도 5번 맞으면 5초 동안 기절합니다.\n게임은 두 명 넘는 적이 동시에 플레이어를 막지 않게 조정합니다.";
         }
+        if (currentLanguage == LANGUAGE_ES)
+        {
+            if (tutorialRound == 1) return "Los enemigos rojos patrullan el laberinto y persiguen de cerca.\nTocarlos causa 25 de dano, no muerte instantanea.\nTienes 100 de vida y quedas invulnerable un instante despues de recibir dano.\nNo te quedes quieto en los pasillos; avanza hacia la salida verde.";
+            if (tutorialRound == 2) return "Los enemigos rosas disparan.\nSi se alinean contigo en linea recta sin pared de por medio, se detienen y disparan.\nUsa ESPACIO para disparar. Cinco impactos dejan K.O. a cualquier enemigo por 5 segundos.\nTu arma tiene 15 balas; pulsa R para recargar.";
+            if (tutorialRound == 3) return "La linterna ya esta disponible.\nPulsa C para encenderla o apagarla. Revela mas del laberinto, pero gasta bateria.\nEn el tutorial, cada ronda empieza con 100 por ciento de bateria.\nUsala en rafagas cortas para revisar esquinas y encontrar la salida.";
+            return "El jefe morado es el enemigo cuadrado.\nCalcula el camino hacia ti, dispara cuando se alinea y acelera si esta lejos.\nTambien puede quedar K.O. por 5 segundos tras cinco impactos.\nEl juego limita el acoso para que mas de dos enemigos no te atrapen a la vez.";
+        }
 
         if (tutorialRound == 1) return "Inimigos vermelhos patrulham o labirinto e perseguem de perto.\nEncostar neles causa 25 de dano, nao morte instantanea.\nVoce tem 100 de vida e fica invulneravel por um instante apos dano.\nNao pare nos corredores; avance ate a saida verde.";
         if (tutorialRound == 2) return "Inimigos rosas atiram.\nSe ficarem alinhados com voce em linha reta sem parede, eles param e disparam.\nUse ESPACO para atirar. Cinco acertos nocauteiam qualquer inimigo por 5 segundos.\nSua arma tem 15 balas; pressione R para recarregar.";
@@ -2059,6 +2084,17 @@ const char *GetRoundInfoBody(void)
         if (officialRound == 10) return "From round 10 on, everything is active: red, pink, boss, and flashlight.\nThe battery refills only on rounds 10, 15, 20, and so on.\nPlan routes before switching the flashlight off.";
         if (officialRound == 15) return "Difficulty ramp is now active.\nEnemies become faster and use pathfinding more often each round.\nKnockouts, reload timing, and battery control matter more from here.";
         return "Cross the maze and reach the green exit.\nUse SPACE to shoot, R to reload, and C for flashlight when available.\nStay mobile and use knockouts to open a path.";
+    }
+    if (currentLanguage == LANGUAGE_ES)
+    {
+        if (officialRound == 1) return "La partida oficial empieza ahora.\nLas rondas 1 y 2 usan enemigos rojos de patrulla y rosas que disparan.\nEmpiezas con 100 de vida, 15 balas y bateria llena guardada para mas adelante.\nLlega a la salida verde para avanzar.";
+        if (officialRound == 3) return "Empiezan las rondas con linterna.\nLas rondas 3 y 4 tienen rojos, rosas y vision limitada.\nLa bateria no se recarga cada ronda; usala con cuidado.\nSe recarga en la ronda 5 y luego cada 5 rondas.";
+        if (officialRound == 5) return "La ronda 5 recarga la bateria de la linterna al 100 por ciento.\nEsta ronda se centra solo en el jefe morado.\nSigue moviendote, rompe la alineacion cuando dispare y acierta cinco veces para dejarlo K.O.";
+        if (officialRound == 6) return "Las rondas 6 y 7 combinan al jefe con enemigos rojos.\nEl jefe te persigue directo mientras los rojos presionan las rutas cercanas.\nUsa disparos para abrir espacio y evita quedar acorralado.";
+        if (officialRound == 8) return "Las rondas 8 y 9 suman todos los tipos de enemigo menos la oscuridad de la linterna.\nLos rojos persiguen, los rosas disparan y el jefe acelera cuando esta lejos.\nPresta atencion a la musica: sube cuando el peligro esta cerca.";
+        if (officialRound == 10) return "Desde la ronda 10, todo esta activo: rojo, rosa, jefe y linterna.\nLa bateria solo se recarga en las rondas 10, 15, 20 y asi sucesivamente.\nPlanea la ruta antes de apagar la linterna.";
+        if (officialRound == 15) return "La dificultad creciente ya esta activa.\nLos enemigos se vuelven mas rapidos y calculan camino con mas frecuencia cada ronda.\nEl K.O., el tiempo de recarga y la gestion de bateria importan mas desde aqui.";
+        return "Cruza el laberinto y llega a la salida verde.\nUsa ESPACIO para disparar, R para recargar y C para la linterna cuando este disponible.\nMantente en movimiento y usa los K.O. para abrir camino.";
     }
     if (currentLanguage == LANGUAGE_KO)
     {
@@ -3033,30 +3069,56 @@ void ResetGame(void)
     roundNeedsSetup = true;
 }
 
+/* Small hex/circuit glyph drawn with plain primitives (no image assets,
+ * so it costs nothing in binary size) to echo the reference dashboard's
+ * corner icon. */
+void DrawHudIcon(Vector2 center, float radius, Color color)
+{
+    DrawPolyLines(center, 6, radius, 0.0f, color);
+    DrawPolyLines(center, 6, radius * 0.62f, 0.0f, Fade(color, 0.7f));
+    DrawCircleV(center, radius * 0.16f, color);
+}
+
+/* Segmented bar: a row of small rounded blocks instead of one solid fill,
+ * matching the reference HUD's "chip" style bars for ammo/health. Pure
+ * vector shapes, so it adds no asset weight. */
+void DrawSegmentedBar(float x, float y, float width, float height, int totalSegments, int filledSegments, Color filledColor, Color emptyColor, float scale)
+{
+    if (totalSegments < 1)
+    {
+        totalSegments = 1;
+    }
+
+    float gap = 3.0f * scale;
+    float segmentWidth = (width - (gap * (float)(totalSegments - 1))) / (float)totalSegments;
+
+    for (int i = 0; i < totalSegments; i++)
+    {
+        Rectangle segment = { x + (float)i * (segmentWidth + gap), y, segmentWidth, height };
+        Color segmentColor = (i < filledSegments) ? filledColor : emptyColor;
+        DrawRectangleRounded(segment, 0.35f, 4, segmentColor);
+    }
+}
+
 void DrawPlayerHealthBar(float x, float y, float width, float scale)
 {
-    Rectangle barBackground = { x, y, width, 20.0f * scale };
-    Rectangle barFill = barBackground;
-    Color healthColor = LIME;
+    Color healthColor = (Color){ 80, 230, 255, 255 };
     int healthFontSize = ScaleFontSize(18.0f);
-
-    barFill.width = (barBackground.width * (float)playerHealth) / (float)PLAYER_MAX_HEALTH;
-
     float healthRatio = (PLAYER_MAX_HEALTH > 0) ? ((float)playerHealth / (float)PLAYER_MAX_HEALTH) : 0.0f;
+    int totalSegments = 10;
+    int filledSegments = (int)ceilf(healthRatio * (float)totalSegments);
 
     if (healthRatio <= 0.3f)
     {
-        healthColor = RED;
+        healthColor = (Color){ 255, 70, 90, 255 };
     }
     else if (healthRatio <= 0.6f)
     {
-        healthColor = ORANGE;
+        healthColor = (Color){ 255, 170, 60, 255 };
     }
 
     DrawTextStrongFit(TextFormat(T(TEXT_HEALTH), playerHealth, PLAYER_MAX_HEALTH), (int)x, (int)(y - 25.0f * scale), healthFontSize, 12, 1.0f * scale, width, RAYWHITE, BLACK);
-    DrawRectangleRounded(barBackground, 0.22f, 10, (Color){ 35, 35, 35, 255 });
-    DrawRectangleRounded(barFill, 0.35f, 10, healthColor);
-    DrawRectangleRoundedLinesEx(barBackground, 0.22f, 10, 2.0f * scale, RAYWHITE);
+    DrawSegmentedBar(x, y, width, 20.0f * scale, totalSegments, filledSegments, healthColor, (Color){ 30, 34, 52, 255 }, scale);
 }
 
 void DrawHud(void)
@@ -3066,10 +3128,9 @@ void DrawHud(void)
      * nothing overlaps or crowds the row above/below it (the old layout
      * used fixed y-values that collided once the title got bigger). */
     float scale = GetUIScale();
-    float screenWidth = (float)GetScreenWidth();
     float panelX = 10.0f * scale;
     float panelY = 58.0f * scale;
-    float panelWidth = fminf(screenWidth - (20.0f * scale), fmaxf(330.0f * scale, 408.0f * scale));
+    float panelWidth = GetHudPanelWidth();
     float padding = 16.0f * scale;
     float textX = panelX + padding;
     float contentWidth = panelWidth - (padding * 2.0f);
@@ -3077,7 +3138,7 @@ void DrawHud(void)
     float rowGapSmall = 9.0f * scale;
     float rowGap = 24.0f * scale;
     float dividerInset = 10.0f * scale;
-    float panelHeight = currentRoundConfig.flashlightEnabled ? 458.0f * scale : 386.0f * scale;
+    float panelHeight = currentRoundConfig.flashlightEnabled ? 484.0f * scale : 412.0f * scale;
     int titleFontSize = ScaleFontSize(25.0f);
     int metricFontSize = ScaleFontSize(15.0f);
     int mediumFontSize = ScaleFontSize(18.0f);
@@ -3089,7 +3150,10 @@ void DrawHud(void)
     DrawRectangleRoundedLinesEx(panel, 0.06f, 10, 2.0f * scale, HUD_BORDER_COLOR);
 
     /* Title row */
-    DrawTextStrongFit("BYTEMAZE", (int)textX, (int)rowY, titleFontSize, 16, 1.5f * scale, contentWidth, (Color){ 80, 255, 140, 255 }, BLACK);
+    float iconRadius = 11.0f * scale;
+    Vector2 iconCenter = { textX + iconRadius, rowY + iconRadius * 0.85f };
+    DrawHudIcon(iconCenter, iconRadius, HUD_BORDER_COLOR);
+    DrawTextStrongFit("BYTEMAZE", (int)(textX + iconRadius * 2.6f), (int)rowY, titleFontSize, 16, 1.5f * scale, contentWidth - iconRadius * 2.6f, (Color){ 120, 235, 255, 255 }, BLACK);
     rowY += 34.0f * scale;
     DrawTextStrongFit(TextFormat("%lld bytes   %.2f%%", executableSizeBytes, executableUsagePercent), (int)textX, (int)rowY, metricFontSize, 10, 1.0f * scale, contentWidth, LIGHTGRAY, BLACK);
     rowY += 26.0f * scale;
@@ -3098,7 +3162,7 @@ void DrawHud(void)
     rowY += 14.0f * scale;
 
     /* Progress row */
-    DrawTextStrongFit(TextFormat(T(TEXT_BEST_ROUND), bestOfficialRound), (int)textX, (int)rowY, mediumFontSize, 11, 1.0f * scale, contentWidth, GOLD, BLACK);
+    DrawTextStrongFit(TextFormat(T(TEXT_BEST_ROUND), bestOfficialRound), (int)textX, (int)rowY, mediumFontSize, 11, 1.0f * scale, contentWidth, (Color){ 190, 90, 255, 255 }, BLACK);
     rowY += 25.0f * scale;
     DrawTextStrongFit(inTutorialSequence ? TextFormat(T(TEXT_TUTORIAL_PROGRESS), tutorialRound) : TextFormat(T(TEXT_ROUND_PROGRESS), officialRound), (int)textX, (int)rowY, progressFontSize, 12, 1.0f * scale, contentWidth, RAYWHITE, BLACK);
     rowY += 49.0f * scale;
@@ -3111,10 +3175,12 @@ void DrawHud(void)
     rowY += 14.0f * scale;
 
     /* Controls row */
-    DrawTextStrongFit(T(TEXT_SHOOT), (int)textX, (int)rowY, progressFontSize, 12, 1.0f * scale, contentWidth, ORANGE, BLACK);
+    DrawTextStrongFit(T(TEXT_SHOOT), (int)textX, (int)rowY, progressFontSize, 12, 1.0f * scale, contentWidth, (Color){ 190, 90, 255, 255 }, BLACK);
     rowY += 28.0f * scale;
     DrawTextStrongFit(TextFormat(T(TEXT_AMMO), playerAmmo, PLAYER_MAX_AMMO), (int)textX, (int)rowY, mediumFontSize, 11, 1.0f * scale, contentWidth, RAYWHITE, BLACK);
-    rowY += 23.0f * scale;
+    rowY += 21.0f * scale;
+    DrawSegmentedBar(textX, rowY, fminf(250.0f * scale, contentWidth), 12.0f * scale, PLAYER_MAX_AMMO, playerAmmo, (Color){ 80, 200, 255, 255 }, (Color){ 30, 34, 52, 255 }, scale);
+    rowY += 24.0f * scale;
     if (playerReloadTimer > 0.0f)
     {
         DrawTextStrongFit(TextFormat(T(TEXT_RELOADING), playerReloadTimer), (int)textX, (int)rowY, mediumFontSize, 11, 1.0f * scale, contentWidth, YELLOW, BLACK);
@@ -3127,11 +3193,11 @@ void DrawHud(void)
 
     if (currentRoundConfig.flashlightEnabled)
     {
-        DrawTextStrongFit(T(TEXT_FLASHLIGHT_CONTROL), (int)textX, (int)rowY, mediumFontSize, 11, 1.0f * scale, contentWidth, GOLD, BLACK);
+        DrawTextStrongFit(T(TEXT_FLASHLIGHT_CONTROL), (int)textX, (int)rowY, mediumFontSize, 11, 1.0f * scale, contentWidth, (Color){ 190, 90, 255, 255 }, BLACK);
         rowY += rowGapSmall + (15.0f * scale);
-        DrawTextStrongFit(TextFormat(T(TEXT_FLASHLIGHT_STATE), flashlightOn ? T(TEXT_FLASHLIGHT_ON) : T(TEXT_FLASHLIGHT_OFF)), (int)textX, (int)rowY, mediumFontSize, 11, 1.0f * scale, contentWidth, flashlightOn ? GREEN : GRAY, BLACK);
+        DrawTextStrongFit(TextFormat(T(TEXT_FLASHLIGHT_STATE), flashlightOn ? T(TEXT_FLASHLIGHT_ON) : T(TEXT_FLASHLIGHT_OFF)), (int)textX, (int)rowY, mediumFontSize, 11, 1.0f * scale, contentWidth, flashlightOn ? (Color){ 80, 230, 255, 255 } : GRAY, BLACK);
         rowY += rowGapSmall + (15.0f * scale);
-        DrawTextStrongFit(TextFormat(T(TEXT_BATTERY), flashlightBattery), (int)textX, (int)rowY, mediumFontSize, 11, 1.0f * scale, contentWidth, GREEN, BLACK);
+        DrawTextStrongFit(TextFormat(T(TEXT_BATTERY), flashlightBattery), (int)textX, (int)rowY, mediumFontSize, 11, 1.0f * scale, contentWidth, (Color){ 80, 230, 255, 255 }, BLACK);
         rowY += rowGap;
     }
 
@@ -3326,8 +3392,8 @@ void DrawBullets(void)
         if (bullets[i].fromBoss)
         {
             drawRadius = fmaxf(bullets[i].radius * scale * 1.55f, 5.0f);
-            bulletColor = VIOLET;
-            DrawCircleV(center, drawRadius * 1.8f, Fade(VIOLET, 0.22f));
+            bulletColor = SKYBLUE;
+            DrawCircleV(center, drawRadius * 1.8f, Fade(SKYBLUE, 0.22f));
         }
 
         DrawCircleV(center, drawRadius, bulletColor);
