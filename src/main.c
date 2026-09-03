@@ -1,15 +1,21 @@
 #include "raylib.h"
 #include "math.h"
 #include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
 #include <sys/stat.h>
+
+#ifdef _MSC_VER
+#pragma execution_character_set("utf-8")
+#endif
 
 #define SCREEN_WIDTH 960
 #define SCREEN_HEIGHT 640
 
-#define GRID_HEIGTH 21
-#define GRID_WIDTH 31
+#define GRID_HEIGTH 33
+#define GRID_WIDTH 51
 #define TILE_SIZE 24
-#define HUD_HEIGHT 56.0f
+#define HUD_HEIGHT 92.0f
 #define MAZE_PADDING 24.0f
 #define CONTEST_BYTE_LIMIT 1474560LL
 
@@ -36,6 +42,9 @@
 #define PLAYER_DAMAGE_COOLDOWN 1.0f
 #define PLAYER_CROWD_RADIUS (TILE_SIZE * 2.75f)
 #define PLAYER_MAX_NEAR_ENEMIES 2
+#define PLAYER_COLLISION_STEP 2.0f
+#define PLAYER_COLLISION_SKIN 1.0f
+#define PLAYER_WALL_RADIUS_SCALE 0.72f
 #define MUSIC_BASE_VOLUME 0.12f
 #define MUSIC_NEAR_ENEMY_VOLUME 0.45f
 #define MUSIC_NEAR_ENEMY_DISTANCE (TILE_SIZE * 8.0f)
@@ -45,9 +54,11 @@
 #define VICTORY_VOLUME 0.8f
 #define GAME_OVER_VOLUME 0.8f
 #define UI_FONT_PATH "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
-#define UI_FONT_SIZE 28
+#define UI_FONT_BAKE_SIZE 48
+#define UI_MAX_CODEPOINTS 512
 #define BOSS_FAR_DISTANCE_THRESHOLD (TILE_SIZE * 10.0f)
 #define BOSS_FAR_SPEED_MULTIPLIER 1.8f
+#define MAX_SIMULATION_FRAME_TIME (1.0f / 45.0f)
 
 int grid[GRID_HEIGTH][GRID_WIDTH];
 long long executableSizeBytes = -1;
@@ -59,35 +70,133 @@ int playerAmmo = PLAYER_MAX_AMMO;
 float playerReloadTimer = 0.0f;
 float playerDamageCooldown = 0.0f;
 
-Color HUD_PANEL_COLOR = { 10, 10, 10, 220 };
-Color HUD_BORDER_COLOR = { 0, 255, 70, 255 };
-Color MAZE_WALL_COLOR = { 56, 64, 72, 255 };
-Color MAZE_PATH_COLOR = { 238, 240, 235, 255 };
-Color MAZE_SHADOW_COLOR = { 16, 18, 20, 255 };
-Color MAZE_EXIT_COLOR = { 0, 230, 70, 255 };
+Color HUD_PANEL_COLOR = { 5, 10, 32, 232 };
+/* Softer, less saturated than the original neon cyan/magenta so the maze
+ * (not the HUD chrome) reads as the visual focal point. */
+Color HUD_BORDER_COLOR = { 70, 150, 200, 255 };
+Color HUD_ACCENT_COLOR = { 150, 100, 195, 255 };
+Color MAZE_WALL_COLOR = { 20, 22, 36, 255 };
+Color MAZE_PATH_COLOR = { 235, 240, 250, 255 };
+Color MAZE_SHADOW_COLOR = { 8, 9, 18, 255 };
+Color MAZE_EXIT_COLOR = { 60, 230, 130, 255 };
+
+float GetUIScale(void);
+
+/* The HUD panel's width is fixed (not shrunk to fit leftover space) so
+ * its text never has to compress past its readable floor and overflow
+ * the border. The maze reserves this much on the left when it lays
+ * itself out, so there's always room and the panel never overlaps it. */
+static bool IsCompactLayout(void)
+{
+    return GetScreenWidth() < 1250 || GetScreenHeight() < 720;
+}
+
+float GetHudPanelWidth(void)
+{
+    float scale = GetUIScale();
+    float w = (float)GetScreenWidth();
+
+    if (IsCompactLayout())
+    {
+        return fmaxf(230.0f * scale, fminf(w - 24.0f * scale, 380.0f * scale));
+    }
+
+    return fminf(330.0f * scale, w * 0.17f);
+}
+
+float GetMazeLeftReservedWidth(void)
+{
+    if (IsCompactLayout()) return 0.0f;
+    return GetHudPanelWidth() + (10.0f * GetUIScale());
+}
+
+float GetHudRightPanelWidth(void)
+{
+    float scale = GetUIScale();
+    float w = (float)GetScreenWidth();
+
+    if (IsCompactLayout())
+    {
+        return fmaxf(230.0f * scale, fminf(w - 24.0f * scale, 380.0f * scale));
+    }
+
+    return fminf(330.0f * scale, w * 0.17f);
+}
 
 float GetMazeScale(void)
 {
     float mazeWidth = (float)(GRID_WIDTH * TILE_SIZE);
     float mazeHeight = (float)(GRID_HEIGTH * TILE_SIZE);
-    float availableWidth = (float)GetScreenWidth() - (MAZE_PADDING * 2.0f);
-    float availableHeight = (float)GetScreenHeight() - HUD_HEIGHT - (MAZE_PADDING * 2.0f);
+    float ui = GetUIScale();
+
+    if (IsCompactLayout())
+    {
+        /* Compact mode: the maze gets the entire central area. HUD panels
+         * are drawn above/below it instead of stealing horizontal space. */
+        float horizontalPadding = 10.0f * ui;
+        float topSpace = 162.0f * ui;
+        float bottomSpace = 108.0f * ui;
+        float availableWidth = (float)GetScreenWidth() - horizontalPadding * 2.0f;
+        float availableHeight = (float)GetScreenHeight() - topSpace - bottomSpace;
+        float scaleX = availableWidth / mazeWidth;
+        float scaleY = availableHeight / mazeHeight;
+        return fmaxf(0.42f, fminf(fminf(scaleX, scaleY), 1.85f));
+    }
+
+    float sideGap = 20.0f * ui;
+    float availableWidth = (float)GetScreenWidth()
+        - GetMazeLeftReservedWidth()
+        - GetHudRightPanelWidth()
+        - sideGap;
+    float availableHeight = (float)GetScreenHeight()
+        - (70.0f * ui)
+        - (22.0f * ui);
     float scaleX = availableWidth / mazeWidth;
     float scaleY = availableHeight / mazeHeight;
-    return fminf(scaleX, scaleY);
+
+    /* The floor here must never exceed what the available space can
+     * actually fit - a fixed 0.65 floor used to win over a smaller
+     * computed scale, which is exactly why the maze kept rendering at
+     * its old size and drawing over the HUD panels once they got wider.
+     * Clamping the floor itself to availableWidth/Height fixes that: the
+     * maze always shrinks to fit first, and only grows up to 1.65x when
+     * there's genuinely room to spare. */
+    float fitScale = fminf(scaleX, scaleY);
+    float minScale = fminf(0.65f, fmaxf(0.35f, fitScale));
+    return fmaxf(minScale, fminf(fitScale, 1.85f));
 }
 
 Vector2 GetMazeOffset(float scale)
 {
     float mazeWidth = (float)(GRID_WIDTH * TILE_SIZE) * scale;
     float mazeHeight = (float)(GRID_HEIGTH * TILE_SIZE) * scale;
-    float freeWidth = (float)GetScreenWidth() - mazeWidth;
-    float freeHeight = (float)GetScreenHeight() - HUD_HEIGHT - mazeHeight;
+    float ui = GetUIScale();
 
-    Vector2 offset = { 0 };
-    offset.x = freeWidth * 0.5f;
-    offset.y = HUD_HEIGHT + (freeHeight * 0.5f);
-    return offset;
+    if (IsCompactLayout())
+    {
+        float topSpace = 162.0f * ui;
+        float bottomSpace = 108.0f * ui;
+        return (Vector2){
+            ((float)GetScreenWidth() - mazeWidth) * 0.5f,
+            topSpace + (((float)GetScreenHeight() - topSpace - bottomSpace) - mazeHeight) * 0.5f
+        };
+    }
+
+    float leftReserved = GetMazeLeftReservedWidth();
+    float rightReserved = GetHudRightPanelWidth();
+    float sideGap = 20.0f * ui;
+    float availableWidth = (float)GetScreenWidth() - leftReserved - rightReserved - sideGap;
+    /* Clamped to >= 0: with the scale now always fit to availableWidth
+     * (see GetMazeScale), freeWidth should never go negative, but this
+     * guards against ever pushing the maze left edge into the HUD panel
+     * if screen math rounds awkwardly at extreme window sizes. */
+    float freeWidth = fmaxf(0.0f, availableWidth - mazeWidth);
+    float freeHeight = fmaxf(0.0f, (float)GetScreenHeight() - (70.0f * ui) - mazeHeight);
+
+    return (Vector2){
+        leftReserved + (sideGap * 0.5f) + (freeWidth * 0.5f),
+        (70.0f * ui) + (freeHeight * 0.5f)
+    };
 }
 
 Vector2 WorldToScreenPosition(Vector2 worldPosition, float scale, Vector2 offset)
@@ -96,6 +205,16 @@ Vector2 WorldToScreenPosition(Vector2 worldPosition, float scale, Vector2 offset
     screenPosition.x = offset.x + (worldPosition.x * scale);
     screenPosition.y = offset.y + (worldPosition.y * scale);
     return screenPosition;
+}
+
+Rectangle GetMazeScreenRect(float scale, Vector2 offset)
+{
+    return (Rectangle){
+        offset.x,
+        offset.y,
+        (float)(GRID_WIDTH * TILE_SIZE) * scale,
+        (float)(GRID_HEIGTH * TILE_SIZE) * scale
+    };
 }
 
 long long GetFileSizeBytes(const char *filePath)
@@ -263,6 +382,7 @@ typedef struct Bullet
     float radius;
     bool active;
     bool fromPlayer;
+    bool fromBoss;
 } Bullet;
 
 Enemy redEnemies[RED_ENEMY_COUNT];
@@ -279,6 +399,9 @@ Sound gameOverSound;
 bool gameAudioLoaded = false;
 Font uiFont;
 bool uiFontLoaded = false;
+Font uiLatinFont;
+bool uiLatinFontLoaded = false;
+Color currentDrawColor = WHITE;
 
 Player player;
 
@@ -292,6 +415,7 @@ typedef enum GamePhase
 typedef enum Language
 {
     LANGUAGE_PT_BR,
+    LANGUAGE_ES,
     LANGUAGE_EN,
     LANGUAGE_KO,
     LANGUAGE_COUNT
@@ -300,7 +424,7 @@ typedef enum Language
 typedef enum TextId
 {
     TEXT_LANGUAGE_NAME,
-    TEXT_LANGUAGE_HINT,
+    TEXT_LANGUAGE_BUTTON,
     TEXT_BEST_ROUND,
     TEXT_TUTORIAL_PROGRESS,
     TEXT_ROUND_PROGRESS,
@@ -317,8 +441,26 @@ typedef enum TextId
     TEXT_GAME_OVER,
     TEXT_PLAY_AGAIN,
     TEXT_SKIP_TUTORIAL,
+    TEXT_CONTINUE_TUTORIAL,
     TEXT_INTRO_FOOTER,
     TEXT_ROUND_FOOTER,
+    TEXT_HUD_STATUS_TITLE,
+    TEXT_HUD_MAIN_DATA,
+    TEXT_HUD_LOG_TITLE,
+    TEXT_HUD_EXECUTABLE,
+    TEXT_HUD_BYTES,
+    TEXT_HUD_LIMIT,
+    TEXT_HUD_VITAL_TITLE,
+    TEXT_HUD_VIDA,
+    TEXT_HUD_WEAPON_TITLE,
+    TEXT_HUD_BALAS,
+    TEXT_HUD_CONTROLS_TITLE,
+    TEXT_HUD_ATIRAR,
+    TEXT_HUD_LASER_SHOT,
+    TEXT_HUD_RECARREGAR,
+    TEXT_HUD_FILL_AMMO,
+    TEXT_HUD_LANTERNA,
+    TEXT_RELOAD_IN_PROGRESS,
     TEXT_COUNT
 } TextId;
 
@@ -338,8 +480,10 @@ int tutorialRound = 1;
 int officialRound = 1;
 int bestOfficialRound = 1;
 bool roundNeedsSetup = true;
+bool playerStartAuraVisible = true;
 
 void SpawnBullet(Vector2 position, Vector2 direction, float speed, bool fromPlayer);
+void SpawnBossBullet(Vector2 position, Vector2 direction);
 int GetDifficultyRampLevel(void);
 float GetRedEnemyTrackDistance(void);
 float GetBlueEnemyPathfindChance(void);
@@ -352,11 +496,36 @@ void UpdateGameAudio(void);
 void ShutdownGameAudio(void);
 void InitUIFont(void);
 void ShutdownUIFont(void);
+Vector2 MeasureTextStrongSpaced(const char *text, int fontSize, float spacing);
+
+float GetUIScale(void)
+{
+    float widthScale = (float)GetScreenWidth() / (float)SCREEN_WIDTH;
+    float heightScale = (float)GetScreenHeight() / (float)SCREEN_HEIGHT;
+    return fminf(fmaxf(fminf(widthScale, heightScale), 0.78f), 1.22f);
+}
+
+int ScaleFontSize(float fontSize)
+{
+    /* Global readability boost: every label in the game (HUD, buttons, tutorial
+     * panels, language selector) reads this value, so bumping it here
+     * raises legibility everywhere at once instead of hunting down each
+     * call site - and it stays responsive since it's still multiplied by
+     * GetUIScale(), and every fitted label (DrawTextStrongFit) shrinks
+     * itself back down if the extra size wouldn't fit its box. */
+    #define UI_READABILITY_BOOST 1.62f
+    return (int)fmaxf(13.0f, roundf(fontSize * UI_READABILITY_BOOST * GetUIScale()));
+}
+
+float GetStableFrameTime(void)
+{
+    return fminf(GetFrameTime(), MAX_SIMULATION_FRAME_TIME);
+}
 
 const char *uiText[LANGUAGE_COUNT][TEXT_COUNT] = {
     [LANGUAGE_PT_BR] = {
         [TEXT_LANGUAGE_NAME] = "PT-BR",
-        [TEXT_LANGUAGE_HINT] = "Idioma: PT-BR  |  L muda idioma",
+        [TEXT_LANGUAGE_BUTTON] = "PT-BR",
         [TEXT_BEST_ROUND] = "Recorde pessoal: round %d",
         [TEXT_TUTORIAL_PROGRESS] = "Tutorial %d/4",
         [TEXT_ROUND_PROGRESS] = "Round %d",
@@ -373,12 +542,70 @@ const char *uiText[LANGUAGE_COUNT][TEXT_COUNT] = {
         [TEXT_GAME_OVER] = "VOCE MORREU",
         [TEXT_PLAY_AGAIN] = "JOGAR DE NOVO",
         [TEXT_SKIP_TUTORIAL] = "Pular tutorial",
-        [TEXT_INTRO_FOOTER] = "Qualquer tecla ou clique inicia. L muda idioma.",
-        [TEXT_ROUND_FOOTER] = "Qualquer tecla ou clique comeca. L muda idioma."
+        [TEXT_CONTINUE_TUTORIAL] = "Continuar",
+        [TEXT_INTRO_FOOTER] = "Escolha um idioma acima e continue abaixo.",
+        [TEXT_ROUND_FOOTER] = "Clique em Continuar para jogar este passo.",
+        [TEXT_HUD_STATUS_TITLE] = "STATUS DO SISTEMA",
+        [TEXT_HUD_MAIN_DATA] = "DADOS PRINCIPAIS",
+        [TEXT_HUD_LOG_TITLE] = "LOG DE DADOS",
+        [TEXT_HUD_EXECUTABLE] = "EXECUTAVEL",
+        [TEXT_HUD_BYTES] = "bytes",
+        [TEXT_HUD_LIMIT] = "LIMITE",
+        [TEXT_HUD_VITAL_TITLE] = "VITAL DO NUCLEO",
+        [TEXT_HUD_VIDA] = "VIDA",
+        [TEXT_HUD_WEAPON_TITLE] = "ARMAMENTO",
+        [TEXT_HUD_BALAS] = "BALAS",
+        [TEXT_HUD_CONTROLS_TITLE] = "CONTROLES DO TERMINAL",
+        [TEXT_HUD_ATIRAR] = "ATIRAR",
+        [TEXT_HUD_LASER_SHOT] = "Disparo laser",
+        [TEXT_HUD_RECARREGAR] = "RECARREGAR",
+        [TEXT_HUD_FILL_AMMO] = "Preencher balas",
+        [TEXT_HUD_LANTERNA] = "LANTERNA",
+        [TEXT_RELOAD_IN_PROGRESS] = "Recarregando"
+    },
+    [LANGUAGE_ES] = {
+        [TEXT_LANGUAGE_NAME] = "ES",
+        [TEXT_LANGUAGE_BUTTON] = "ES",
+        [TEXT_BEST_ROUND] = "Mejor marca: ronda %d",
+        [TEXT_TUTORIAL_PROGRESS] = "Tutorial %d/4",
+        [TEXT_ROUND_PROGRESS] = "Ronda %d",
+        [TEXT_HEALTH] = "Vida: %d/%d",
+        [TEXT_SHOOT] = "Disparar: ESPACIO",
+        [TEXT_AMMO] = "Balas: %d/%d",
+        [TEXT_RELOADING] = "Recargando: %.1fs",
+        [TEXT_RELOAD] = "Recargar: R",
+        [TEXT_FLASHLIGHT_CONTROL] = "Linterna: C",
+        [TEXT_FLASHLIGHT_STATE] = "Linterna: %s",
+        [TEXT_FLASHLIGHT_ON] = "encendida",
+        [TEXT_FLASHLIGHT_OFF] = "apagada",
+        [TEXT_BATTERY] = "Bateria: %.0f%%",
+        [TEXT_GAME_OVER] = "HAS MUERTO",
+        [TEXT_PLAY_AGAIN] = "JUGAR DE NUEVO",
+        [TEXT_SKIP_TUTORIAL] = "Saltar tutorial",
+        [TEXT_CONTINUE_TUTORIAL] = "Continuar",
+        [TEXT_INTRO_FOOTER] = "Elige un idioma arriba y continua abajo.",
+        [TEXT_ROUND_FOOTER] = "Haz clic en Continuar para jugar este paso.",
+        [TEXT_HUD_STATUS_TITLE] = "ESTADO DEL SISTEMA",
+        [TEXT_HUD_MAIN_DATA] = "DATOS PRINCIPALES",
+        [TEXT_HUD_LOG_TITLE] = "REGISTRO DE DATOS",
+        [TEXT_HUD_EXECUTABLE] = "EJECUTABLE",
+        [TEXT_HUD_BYTES] = "bytes",
+        [TEXT_HUD_LIMIT] = "LIMITE",
+        [TEXT_HUD_VITAL_TITLE] = "VITAL DEL NUCLEO",
+        [TEXT_HUD_VIDA] = "VIDA",
+        [TEXT_HUD_WEAPON_TITLE] = "ARMAMENTO",
+        [TEXT_HUD_BALAS] = "BALAS",
+        [TEXT_HUD_CONTROLS_TITLE] = "CONTROLES DE LA TERMINAL",
+        [TEXT_HUD_ATIRAR] = "DISPARAR",
+        [TEXT_HUD_LASER_SHOT] = "Disparo laser",
+        [TEXT_HUD_RECARREGAR] = "RECARGAR",
+        [TEXT_HUD_FILL_AMMO] = "Rellenar balas",
+        [TEXT_HUD_LANTERNA] = "LINTERNA",
+        [TEXT_RELOAD_IN_PROGRESS] = "Recargando"
     },
     [LANGUAGE_EN] = {
         [TEXT_LANGUAGE_NAME] = "EN",
-        [TEXT_LANGUAGE_HINT] = "Language: EN  |  L changes language",
+        [TEXT_LANGUAGE_BUTTON] = "EN",
         [TEXT_BEST_ROUND] = "Personal best: round %d",
         [TEXT_TUTORIAL_PROGRESS] = "Tutorial %d/4",
         [TEXT_ROUND_PROGRESS] = "Round %d",
@@ -395,12 +622,30 @@ const char *uiText[LANGUAGE_COUNT][TEXT_COUNT] = {
         [TEXT_GAME_OVER] = "YOU DIED",
         [TEXT_PLAY_AGAIN] = "PLAY AGAIN",
         [TEXT_SKIP_TUTORIAL] = "Skip tutorial",
-        [TEXT_INTRO_FOOTER] = "Any key or click starts. L changes language.",
-        [TEXT_ROUND_FOOTER] = "Any key or click starts. L changes language."
+        [TEXT_CONTINUE_TUTORIAL] = "Continue",
+        [TEXT_INTRO_FOOTER] = "Choose a language above and continue below.",
+        [TEXT_ROUND_FOOTER] = "Click Continue to play this step.",
+        [TEXT_HUD_STATUS_TITLE] = "SYSTEM STATUS",
+        [TEXT_HUD_MAIN_DATA] = "MAIN DATA",
+        [TEXT_HUD_LOG_TITLE] = "DATA LOG",
+        [TEXT_HUD_EXECUTABLE] = "EXECUTABLE",
+        [TEXT_HUD_BYTES] = "bytes",
+        [TEXT_HUD_LIMIT] = "LIMIT",
+        [TEXT_HUD_VITAL_TITLE] = "CORE VITALS",
+        [TEXT_HUD_VIDA] = "HEALTH",
+        [TEXT_HUD_WEAPON_TITLE] = "WEAPONRY",
+        [TEXT_HUD_BALAS] = "AMMO",
+        [TEXT_HUD_CONTROLS_TITLE] = "TERMINAL CONTROLS",
+        [TEXT_HUD_ATIRAR] = "SHOOT",
+        [TEXT_HUD_LASER_SHOT] = "Laser shot",
+        [TEXT_HUD_RECARREGAR] = "RELOAD",
+        [TEXT_HUD_FILL_AMMO] = "Refill ammo",
+        [TEXT_HUD_LANTERNA] = "FLASHLIGHT",
+        [TEXT_RELOAD_IN_PROGRESS] = "Reloading"
     },
     [LANGUAGE_KO] = {
         [TEXT_LANGUAGE_NAME] = "KO",
-        [TEXT_LANGUAGE_HINT] = "언어: 한국어  |  L: 언어 변경",
+        [TEXT_LANGUAGE_BUTTON] = "KO",
         [TEXT_BEST_ROUND] = "최고 기록: 라운드 %d",
         [TEXT_TUTORIAL_PROGRESS] = "튜토리얼 %d/4",
         [TEXT_ROUND_PROGRESS] = "라운드 %d",
@@ -417,38 +662,28 @@ const char *uiText[LANGUAGE_COUNT][TEXT_COUNT] = {
         [TEXT_GAME_OVER] = "사망했습니다",
         [TEXT_PLAY_AGAIN] = "다시 시작",
         [TEXT_SKIP_TUTORIAL] = "튜토리얼 건너뛰기",
-        [TEXT_INTRO_FOOTER] = "아무 키나 클릭으로 시작. L: 언어 변경.",
-        [TEXT_ROUND_FOOTER] = "아무 키나 클릭으로 시작. L: 언어 변경."
+        [TEXT_CONTINUE_TUTORIAL] = "계속",
+        [TEXT_INTRO_FOOTER] = "위에서 언어를 고르고 아래에서 계속하세요.",
+        [TEXT_ROUND_FOOTER] = "계속을 클릭해 이 단계를 플레이하세요.",
+        [TEXT_HUD_STATUS_TITLE] = "시스템 상태",
+        [TEXT_HUD_MAIN_DATA] = "주요 데이터",
+        [TEXT_HUD_LOG_TITLE] = "데이터 로그",
+        [TEXT_HUD_EXECUTABLE] = "실행 파일",
+        [TEXT_HUD_BYTES] = "바이트",
+        [TEXT_HUD_LIMIT] = "제한",
+        [TEXT_HUD_VITAL_TITLE] = "코어 생명 신호",
+        [TEXT_HUD_VIDA] = "체력",
+        [TEXT_HUD_WEAPON_TITLE] = "무장",
+        [TEXT_HUD_BALAS] = "탄약",
+        [TEXT_HUD_CONTROLS_TITLE] = "터미널 조작",
+        [TEXT_HUD_ATIRAR] = "발사",
+        [TEXT_HUD_LASER_SHOT] = "레이저 발사",
+        [TEXT_HUD_RECARREGAR] = "재장전",
+        [TEXT_HUD_FILL_AMMO] = "탄약 채우기",
+        [TEXT_HUD_LANTERNA] = "손전등",
+        [TEXT_RELOAD_IN_PROGRESS] = "재장전 중"
     }
 };
-
-const char koreanGlyphText[] =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,;:!?%-/|()"
-    "언어한국어변경최고기록라운드튜토리얼체력발사스페이스탄약재장전중초손전등켜짐꺼짐배터리"
-    "사망했습니다다시시작건너뛰기아무키나누르거나클릭해서을하세요"
-    "목표는초록출구까지가는것입니다노란삼각형조종하고벽에막히지않게길을찾으세요"
-    "빨간원닿으면체력이깎입니다적은가까이오면음악이커집니다분홍마름모총을쏩니다"
-    "직선통로에서멈추면위험합니다총알발로번맞히면간녹다운됩니다"
-    "손전등어두운곳밝히지만배터리를소모합니다튜토리얼언제나퍼센트공식전첫번째"
-    "이후오마다충전됩니다보스보라색사각형플레이어추적하고멀어지면빨라지며사격합니다"
-    "두명넘게둘러싸지않도록움직입니다"
-    "목표노란삼각형을초록출구까지이동하세요또는방향키로움직입니다로쏘세요"
-    "적에게닿으면체력이감소하고총알은적을동안기절시킵니다게임의규칙을단계별로알려줍니다"
-    "빨간적은미로를순찰하고가까우면추격합니다즉시죽지않고감소합니다플레이어체력은이고피해후잠시무적입니다"
-    "통로에서멈추지말고초록출구로이동하세요분홍적은총을쏘는적입니다같은행이나열에서벽없이마주치면멈추고발사합니다"
-    "적은번맞으면동안기절합니다탄약은발이고로재장전합니다사용할수있습니다켜고끕니다더넓게보이지만배터리를소모합니다"
-    "튜토리얼라운드는항상배터리퍼센트로시작합니다모퉁이와출구를확인할때짧게사용하세요"
-    "보라색사각형은보스입니다찾아오고일직선이면쏘며멀어지면빨라집니다보스도번맞으면동안기절합니다"
-    "게임은두명넘는적이동시에플레이어를막지않게조정합니다공식게임이시작됩니다"
-    "라운드과에는빨간순찰적과분홍사격적이나옵니다체력탄약발로시작하고배터리는이후라운드에대비합니다"
-    "도착하면다음라운드로갑니다손전등라운드가시작됩니다제한된시야가있습니다매라운드충전되지않으니아껴쓰세요"
-    "라운드부터마다충전됩니다이번라운드는보라색보스하나에집중합니다계속움직이고보스가쏠때일직선을피하고맞혀기절시키세요"
-    "함께나옵니다보스는직접추적하고빨간적은주변길을압박합니다총으로공간을만들고막히지않게움직이세요"
-    "손전등어둠을제외한모든적이나옵니다추격하고쏘고멀면빨라집니다음악이커지면가까운위험이있다는뜻입니다"
-    "부터는빨간적분홍적보스손전등이모두활성화됩니다처럼마다만충전됩니다끄기전에이동경로를확인하세요"
-    "이제난이도상승이시작됩니다올라갈수록적이더빠르고더자주길을계산합니다타이밍관리가중요합니다"
-    "미로를지나도착하세요가능할때변경계속움직이고기절시간을이용해길을여세요"
-    "바꿉클릭으로";
 
 const char *T(TextId id)
 {
@@ -460,14 +695,318 @@ Font GetUIFont(void)
     return uiFontLoaded ? uiFont : GetFontDefault();
 }
 
+Font GetUILatinFont(void)
+{
+    return uiLatinFontLoaded ? uiLatinFont : GetUIFont();
+}
+
+/* True: this codepoint belongs to the Korean Hangul ranges and must use
+ * the CJK font, since the pixel font has no glyphs for it. */
+bool IsHangulCodepoint(int codepoint)
+{
+    if (codepoint >= 0xAC00 && codepoint <= 0xD7A3) return true;   /* syllables */
+    if (codepoint >= 0x1100 && codepoint <= 0x11FF) return true;   /* jamo */
+    if (codepoint >= 0x3130 && codepoint <= 0x318F) return true;   /* compat jamo */
+    return false;
+}
+
+/* UI_FONT_PATH only exists on some Linux distros. Try it first, then fall
+ * back to the common Korean-capable fonts shipped with Windows and macOS,
+ * so glyphs render correctly instead of falling back to the default font
+ * (which has no CJK glyphs and draws "?" for every Korean character).
+ *
+ * The relative candidates ("src/assets/...", "assets/...") only resolve
+ * when the game happens to be launched with that folder as the current
+ * working directory. Double-clicking the executable, or launching it from
+ * a shortcut/launcher, almost always uses a different working directory,
+ * which is why Korean silently fell back to "?" glyphs even when the font
+ * file was sitting right next to the .exe. BuildFontCandidatePaths()
+ * below rewrites every relative candidate into an absolute path anchored
+ * to the executable's own folder (GetApplicationDirectory()), so the font
+ * is found regardless of how the game is launched. */
+static const char *uiFontRelativeCandidates[] = {
+    "NanumGothic-Regular.ttf",
+    "fonts/NanumGothic-Regular.ttf",
+    "src/assets/fonts/NanumGothic-Regular.ttf",
+    "assets/fonts/NanumGothic-Regular.ttf",
+    UI_FONT_PATH,
+    "src/assets/fonts/NotoSansCJK-Regular.ttc",
+    "src/assets/fonts/NotoSansKR-Regular.otf",
+    "src/assets/fonts/NotoSansKR-Regular.ttf",
+    "assets/fonts/NotoSansCJK-Regular.ttc",
+    "assets/fonts/NotoSansKR-Regular.otf",
+    "assets/fonts/NotoSansKR-Regular.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansKR-Regular.otf",
+    "/usr/share/fonts/truetype/noto/NotoSansKR-Regular.ttf",
+    "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+    "C:\\Windows\\Fonts\\malgunbd.ttf",
+    "C:\\Windows\\Fonts\\malgun.ttf",
+    "C:/Windows/Fonts/malgunbd.ttf",
+    "C:/Windows/Fonts/malgun.ttf",
+    "/mnt/c/Windows/Fonts/malgunbd.ttf",
+    "/mnt/c/Windows/Fonts/malgun.ttf",
+    "/c/Windows/Fonts/malgunbd.ttf",
+    "/c/Windows/Fonts/malgun.ttf",
+    "/System/Library/Fonts/Supplemental/AppleSDGothicNeo.ttc",
+    "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+    NULL
+};
+
+static const char *uiLatinFontRelativeCandidates[] = {
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+    "src/assets/fonts/DejaVuSans.ttf",
+    "assets/fonts/DejaVuSans.ttf",
+    NULL
+};
+
+/* Returns true if `path` is already absolute (starts with '/', a drive
+ * letter like "C:", or a UNC/backslash root) and therefore should not be
+ * re-anchored to the executable's folder. */
+static bool IsAbsoluteFontPath(const char *path)
+{
+    if (path[0] == '/' || path[0] == '\\')
+    {
+        return true;
+    }
+
+    if (((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) && path[1] == ':')
+    {
+        return true;
+    }
+
+    return false;
+}
+
+/* Turns a list of candidate font paths into absolute paths so the font
+ * loads correctly no matter what directory the game was launched from.
+ * Relative candidates are tried both as-is (covers the working directory
+ * the tool used to package/run the game) and anchored to
+ * GetApplicationDirectory() (covers double-clicking the .exe/binary
+ * directly). Writes up to maxOut paths (each up to maxLen bytes) into
+ * outPaths/outBuffer and returns how many were written. */
+static int BuildFontCandidatePaths(const char *const *relativeCandidates, char outBuffer[][512], const char **outPaths, int maxOut)
+{
+    const char *appDir = GetApplicationDirectory();
+    int count = 0;
+
+    for (int i = 0; relativeCandidates[i] != NULL && count < maxOut; i++)
+    {
+        const char *candidate = relativeCandidates[i];
+
+        /* As given (relative to whatever the current working directory is,
+         * or already absolute). */
+        outPaths[count] = candidate;
+        count++;
+
+        if (count >= maxOut)
+        {
+            break;
+        }
+
+        /* Re-anchored to the executable's own folder. */
+        if (!IsAbsoluteFontPath(candidate) && appDir != NULL)
+        {
+            snprintf(outBuffer[count], 512, "%s%s", appDir, candidate);
+            outPaths[count] = outBuffer[count];
+            count++;
+        }
+    }
+
+    return count;
+}
+
+static bool HasFontExtension(const char *path, const char *extension)
+{
+    size_t pathLen = strlen(path);
+    size_t extensionLen = strlen(extension);
+
+    if (pathLen < extensionLen)
+    {
+        return false;
+    }
+
+    return strcmp(path + pathLen - extensionLen, extension) == 0;
+}
+
+static Font LoadUIFontCandidate(const char *path, int fontSize, const int *codepoints, int codepointCount)
+{
+    if (HasFontExtension(path, ".ttc"))
+    {
+        int dataSize = 0;
+        unsigned char *fileData = LoadFileData(path, &dataSize);
+        Font font = { 0 };
+
+        if (fileData != NULL)
+        {
+            font = LoadFontFromMemory(".ttf", fileData, dataSize, fontSize, codepoints, codepointCount);
+            UnloadFileData(fileData);
+        }
+
+        return font;
+    }
+
+    return LoadFontEx(path, fontSize, codepoints, codepointCount);
+}
+
+static void AddUniqueCodepoint(int *codepoints, int *count, int codepoint)
+{
+    if (*count >= UI_MAX_CODEPOINTS)
+    {
+        return;
+    }
+
+    for (int i = 0; i < *count; i++)
+    {
+        if (codepoints[i] == codepoint)
+        {
+            return;
+        }
+    }
+
+    codepoints[*count] = codepoint;
+    (*count)++;
+}
+
+int *BuildUICodepoints(int *codepointCount)
+{
+    static int codepoints[UI_MAX_CODEPOINTS];
+    int count = 0;
+
+    for (int c = 32; c <= 126; c++)
+    {
+        AddUniqueCodepoint(codepoints, &count, c);
+    }
+
+    int extraCount = 0;
+    int *extraCodepoints = LoadCodepoints("áàâãéêíóôõúçÁÀÂÃÉÊÍÓÔÕÚÇüÜñÑ", &extraCount);
+    for (int i = 0; i < extraCount; i++)
+    {
+        AddUniqueCodepoint(codepoints, &count, extraCodepoints[i]);
+    }
+    UnloadCodepoints(extraCodepoints);
+
+    for (int textId = 0; textId < (int)TEXT_COUNT; textId++)
+    {
+        const char *text = uiText[LANGUAGE_KO][textId];
+        int textLength = (int)strlen(text);
+        int byteIndex = 0;
+
+        while (byteIndex < textLength)
+        {
+            int codepointByteCount = 0;
+            int codepoint = GetCodepointNext(&text[byteIndex], &codepointByteCount);
+            if (codepointByteCount <= 0)
+            {
+                codepointByteCount = 1;
+            }
+
+            AddUniqueCodepoint(codepoints, &count, codepoint);
+            byteIndex += codepointByteCount;
+        }
+    }
+
+    const char *extraKoreanText =
+        "목표는초록출구까지가는것입니다노란삼각형을조종하고벽에막히지않게길을찾으세요"
+        "빨간원은닿으면체력이깎입니다적은가까이오면음악이커집니다분홍마름모는총을쏩니다"
+        "직선통로에서멈추면위험합니다총알은적을잠깐녹다운시킵니다"
+        "손전등은어두운곳을밝히지만배터리를소모합니다튜토리얼공식게임보스보라색사각형"
+        "플레이어를추적하고멀어지면빨라지며사격합니다두명넘게둘러싸지않도록움직입니다"
+        "통로에서멈추지말고이동하세요같은행이나열에서벽없이마주치면멈추고발사합니다"
+        "재장전사용할수있습니다켜고끕니다모퉁이와출구를확인할때짧게사용하세요"
+        "난이도상승올라갈수록더빠르고자주길을계산합니다타이밍관리가중요합니다"
+        "감갑경과규께껴꿉끄넓능대되된됩둠든들또뜻럼려맞매박방버번변별부비성센순쏘쏠쓰안압야여옵외의절접정죽줍즉착찰처충칙켭키튼퍼피함항향혀화활후";
+    int extraKoreanLength = (int)strlen(extraKoreanText);
+    for (int byteIndex = 0; byteIndex < extraKoreanLength; )
+    {
+        int codepointByteCount = 0;
+        int codepoint = GetCodepointNext(&extraKoreanText[byteIndex], &codepointByteCount);
+        if (codepointByteCount <= 0)
+        {
+            codepointByteCount = 1;
+        }
+
+        AddUniqueCodepoint(codepoints, &count, codepoint);
+        byteIndex += codepointByteCount;
+    }
+
+    *codepointCount = count;
+    return codepoints;
+}
+
 void InitUIFont(void)
 {
     int codepointCount = 0;
-    int *codepoints = LoadCodepoints(koreanGlyphText, &codepointCount);
+    int *codepoints = BuildUICodepoints(&codepointCount);
 
-    uiFont = LoadFontEx(UI_FONT_PATH, UI_FONT_SIZE, codepoints, codepointCount);
-    UnloadCodepoints(codepoints);
+    char cjkPathBuffer[80][512];
+    const char *cjkPaths[80];
+    int cjkPathCount = BuildFontCandidatePaths(uiFontRelativeCandidates, cjkPathBuffer, cjkPaths, 80);
+
+    for (int i = 0; i < cjkPathCount; i++)
+    {
+        if (!FileExists(cjkPaths[i]))
+        {
+            continue;
+        }
+
+        uiFont = LoadUIFontCandidate(cjkPaths[i], UI_FONT_BAKE_SIZE, codepoints, codepointCount);
+        if (uiFont.texture.id > 0)
+        {
+            break;
+        }
+    }
+
     uiFontLoaded = uiFont.texture.id > 0;
+
+    if (uiFontLoaded)
+    {
+        /* Bilinear filtering (smooth, not point-sampled) keeps Hangul
+         * strokes clean and readable when the HUD upscales this font -
+         * Korean has no "chunky pixel-art" goal, unlike the Latin font. */
+        SetTextureFilter(uiFont.texture, TEXTURE_FILTER_BILINEAR);
+    }
+
+    int latinCodepoints[140];
+    int latinCount = 0;
+    for (int c = 32; c <= 126; c++)
+    {
+        latinCodepoints[latinCount++] = c;
+    }
+
+    int latinExtraCount = 0;
+    int *latinExtraCodepoints = LoadCodepoints("áàâãéêíóôõúçÁÀÂÃÉÊÍÓÔÕÚÇüÜñÑ", &latinExtraCount);
+    for (int i = 0; i < latinExtraCount && latinCount < 140; i++)
+    {
+        latinCodepoints[latinCount++] = latinExtraCodepoints[i];
+    }
+    UnloadCodepoints(latinExtraCodepoints);
+
+    char latinPathBuffer[16][512];
+    const char *latinPaths[16];
+    int latinPathCount = BuildFontCandidatePaths(uiLatinFontRelativeCandidates, latinPathBuffer, latinPaths, 16);
+
+    for (int i = 0; i < latinPathCount; i++)
+    {
+        if (!FileExists(latinPaths[i]))
+        {
+            continue;
+        }
+
+        uiLatinFont = LoadUIFontCandidate(latinPaths[i], UI_FONT_BAKE_SIZE, latinCodepoints, latinCount);
+        if (uiLatinFont.texture.id > 0)
+        {
+            break;
+        }
+    }
+
+    uiLatinFontLoaded = uiLatinFont.texture.id > 0;
+
+    if (uiLatinFontLoaded)
+    {
+        SetTextureFilter(uiLatinFont.texture, TEXTURE_FILTER_BILINEAR);
+    }
 }
 
 void ShutdownUIFont(void)
@@ -477,6 +1016,12 @@ void ShutdownUIFont(void)
         UnloadFont(uiFont);
         uiFontLoaded = false;
     }
+
+    if (uiLatinFontLoaded)
+    {
+        UnloadFont(uiLatinFont);
+        uiLatinFontLoaded = false;
+    }
 }
 
 float GetDistanceBetweenPoints(Vector2 a, Vector2 b)
@@ -484,6 +1029,106 @@ float GetDistanceBetweenPoints(Vector2 a, Vector2 b)
     float dx = a.x - b.x;
     float dy = a.y - b.y;
     return sqrtf((dx * dx) + (dy * dy));
+}
+
+float GetPointSegmentDistance(Vector2 point, Vector2 segmentStart, Vector2 segmentEnd)
+{
+    float segmentX = segmentEnd.x - segmentStart.x;
+    float segmentY = segmentEnd.y - segmentStart.y;
+    float segmentLengthSquared = (segmentX * segmentX) + (segmentY * segmentY);
+
+    if (segmentLengthSquared <= 0.0001f)
+    {
+        return GetDistanceBetweenPoints(point, segmentStart);
+    }
+
+    float t = ((point.x - segmentStart.x) * segmentX + (point.y - segmentStart.y) * segmentY) / segmentLengthSquared;
+    t = fmaxf(0.0f, fminf(1.0f, t));
+
+    Vector2 closestPoint = {
+        segmentStart.x + segmentX * t,
+        segmentStart.y + segmentY * t
+    };
+
+    return GetDistanceBetweenPoints(point, closestPoint);
+}
+
+float CrossProduct(Vector2 a, Vector2 b, Vector2 c)
+{
+    return ((b.x - a.x) * (c.y - a.y)) - ((b.y - a.y) * (c.x - a.x));
+}
+
+bool IsPointInTriangle(Vector2 point, Vector2 a, Vector2 b, Vector2 c)
+{
+    float area1 = CrossProduct(point, a, b);
+    float area2 = CrossProduct(point, b, c);
+    float area3 = CrossProduct(point, c, a);
+    bool hasNegative = (area1 < 0.0f) || (area2 < 0.0f) || (area3 < 0.0f);
+    bool hasPositive = (area1 > 0.0f) || (area2 > 0.0f) || (area3 > 0.0f);
+
+    return !(hasNegative && hasPositive);
+}
+
+bool IsPointOnSegment(Vector2 point, Vector2 segmentStart, Vector2 segmentEnd)
+{
+    return fabsf(CrossProduct(segmentStart, segmentEnd, point)) <= 0.0001f &&
+           point.x >= fminf(segmentStart.x, segmentEnd.x) - 0.0001f &&
+           point.x <= fmaxf(segmentStart.x, segmentEnd.x) + 0.0001f &&
+           point.y >= fminf(segmentStart.y, segmentEnd.y) - 0.0001f &&
+           point.y <= fmaxf(segmentStart.y, segmentEnd.y) + 0.0001f;
+}
+
+bool DoSegmentsIntersect(Vector2 a, Vector2 b, Vector2 c, Vector2 d)
+{
+    float abC = CrossProduct(a, b, c);
+    float abD = CrossProduct(a, b, d);
+    float cdA = CrossProduct(c, d, a);
+    float cdB = CrossProduct(c, d, b);
+
+    if (fabsf(abC) <= 0.0001f && IsPointOnSegment(c, a, b)) return true;
+    if (fabsf(abD) <= 0.0001f && IsPointOnSegment(d, a, b)) return true;
+    if (fabsf(cdA) <= 0.0001f && IsPointOnSegment(a, c, d)) return true;
+    if (fabsf(cdB) <= 0.0001f && IsPointOnSegment(b, c, d)) return true;
+
+    if (fabsf(abC) <= 0.0001f || fabsf(abD) <= 0.0001f || fabsf(cdA) <= 0.0001f || fabsf(cdB) <= 0.0001f)
+    {
+        return false;
+    }
+
+    return ((abC < 0.0f && abD > 0.0f) || (abC > 0.0f && abD < 0.0f)) &&
+           ((cdA < 0.0f && cdB > 0.0f) || (cdA > 0.0f && cdB < 0.0f));
+}
+
+typedef struct TriangleHitbox
+{
+    Vector2 tip;
+    Vector2 right;
+    Vector2 left;
+} TriangleHitbox;
+
+TriangleHitbox GetPlayerTriangleHitboxScaled(Vector2 position, float scale)
+{
+    float hitboxRadius = player.radius * 1.1f * scale;
+
+    return (TriangleHitbox){
+        {
+            position.x + cosf(player.facingAngle) * hitboxRadius * 1.2f,
+            position.y + sinf(player.facingAngle) * hitboxRadius * 1.2f
+        },
+        {
+            position.x + cosf(player.facingAngle - 2.45f) * hitboxRadius * 0.98f,
+            position.y + sinf(player.facingAngle - 2.45f) * hitboxRadius * 0.98f
+        },
+        {
+            position.x + cosf(player.facingAngle + 2.45f) * hitboxRadius * 0.98f,
+            position.y + sinf(player.facingAngle + 2.45f) * hitboxRadius * 0.98f
+        }
+    };
+}
+
+TriangleHitbox GetPlayerTriangleHitbox(Vector2 position)
+{
+    return GetPlayerTriangleHitboxScaled(position, 1.0f);
 }
 
 int GetDifficultyRampLevel(void)
@@ -563,34 +1208,403 @@ bool IsWorldPositionVisible(Vector2 position)
     return false;
 }
 
+/* Draws one line (no '\n'), using a readable Latin font for PT/ES/EN and
+ * a Korean-capable font only for Hangul glyphs. */
+void DrawMixedLine(Font latinFont, Font cjkFont, const char *line, Vector2 position, float fontSize, float spacing)
+{
+    int length = (int)strlen(line);
+    int byteIndex = 0;
+    float x = position.x;
+
+    while (byteIndex < length)
+    {
+        int codepointByteCount = 0;
+        int codepoint = GetCodepointNext(&line[byteIndex], &codepointByteCount);
+        if (codepointByteCount <= 0)
+        {
+            codepointByteCount = 1;
+        }
+
+        bool isHangul = IsHangulCodepoint(codepoint);
+        Font font = isHangul ? cjkFont : latinFont;
+        float glyphSpacing = isHangul ? spacing * 0.35f : spacing;
+
+        char glyphBuf[8];
+        int copyLen = (codepointByteCount < 7) ? codepointByteCount : 7;
+        memcpy(glyphBuf, &line[byteIndex], copyLen);
+        glyphBuf[copyLen] = '\0';
+
+        DrawTextEx(font, glyphBuf, (Vector2){ x, position.y }, fontSize, 0.0f, currentDrawColor);
+        Vector2 glyphSize = MeasureTextEx(font, glyphBuf, fontSize, 0.0f);
+        x += glyphSize.x + glyphSpacing;
+
+        byteIndex += codepointByteCount;
+    }
+}
+
+Vector2 MeasureMixedLine(Font latinFont, Font cjkFont, const char *line, float fontSize, float spacing)
+{
+    int length = (int)strlen(line);
+    int byteIndex = 0;
+    float width = 0.0f;
+
+    while (byteIndex < length)
+    {
+        int codepointByteCount = 0;
+        int codepoint = GetCodepointNext(&line[byteIndex], &codepointByteCount);
+        if (codepointByteCount <= 0)
+        {
+            codepointByteCount = 1;
+        }
+
+        bool isHangul = IsHangulCodepoint(codepoint);
+        Font font = isHangul ? cjkFont : latinFont;
+        float glyphSpacing = isHangul ? spacing * 0.35f : spacing;
+
+        char glyphBuf[8];
+        int copyLen = (codepointByteCount < 7) ? codepointByteCount : 7;
+        memcpy(glyphBuf, &line[byteIndex], copyLen);
+        glyphBuf[copyLen] = '\0';
+
+        Vector2 glyphSize = MeasureTextEx(font, glyphBuf, fontSize, 0.0f);
+        width += glyphSize.x + glyphSpacing;
+
+        byteIndex += codepointByteCount;
+    }
+
+    if (width > 0.0f)
+    {
+        width -= spacing;
+    }
+
+    return (Vector2){ width, fontSize };
+}
+
+/* Handles '\n' without faking bold with many offset copies. */
+void DrawTextBoldEx(Font latinFont, Font cjkFont, const char *text, Vector2 position, float fontSize, float spacing, Color color)
+{
+    float lineHeight = fontSize * 1.4f;
+    char lineBuf[512];
+    int textLen = (int)strlen(text);
+    int lineStart = 0;
+    int lineIndex = 0;
+
+    for (int i = 0; i <= textLen; i++)
+    {
+        if (text[i] != '\n' && text[i] != '\0')
+        {
+            continue;
+        }
+
+        int lineLen = i - lineStart;
+        if (lineLen > 511)
+        {
+            lineLen = 511;
+        }
+        memcpy(lineBuf, &text[lineStart], lineLen);
+        lineBuf[lineLen] = '\0';
+
+        float y = position.y + lineIndex * lineHeight;
+
+        currentDrawColor = color;
+        DrawMixedLine(latinFont, cjkFont, lineBuf, (Vector2){ position.x, y }, fontSize, spacing);
+
+        lineStart = i + 1;
+        lineIndex++;
+    }
+}
+
 void DrawTextStrong(const char *text, int x, int y, int fontSize, Color color, Color shadowColor)
 {
-    Font font = GetUIFont();
+    Font latinFont = GetUILatinFont();
+    Font cjkFont = GetUIFont();
     Vector2 shadowPos = { (float)(x + 2), (float)(y + 2) };
     Vector2 textPos = { (float)x, (float)y };
 
-    DrawTextEx(font, text, shadowPos, (float)fontSize, 1.0f, shadowColor);
-    DrawTextEx(font, text, textPos, (float)fontSize, 1.0f, color);
+    DrawTextBoldEx(latinFont, cjkFont, text, shadowPos, (float)fontSize, 1.0f, shadowColor);
+    DrawTextBoldEx(latinFont, cjkFont, text, textPos, (float)fontSize, 1.0f, color);
 }
 
 /* Same as DrawTextStrong, but lets the caller control the space between
  * letters. Used where legibility matters most (tutorial explanations). */
 void DrawTextStrongSpaced(const char *text, int x, int y, int fontSize, float spacing, Color color, Color shadowColor)
 {
-    Font font = GetUIFont();
+    Font latinFont = GetUILatinFont();
+    Font cjkFont = GetUIFont();
     Vector2 shadowPos = { (float)(x + 2), (float)(y + 2) };
     Vector2 textPos = { (float)x, (float)y };
 
-    DrawTextEx(font, text, shadowPos, (float)fontSize, spacing, shadowColor);
-    DrawTextEx(font, text, textPos, (float)fontSize, spacing, color);
+    DrawTextBoldEx(latinFont, cjkFont, text, shadowPos, (float)fontSize, spacing, shadowColor);
+    DrawTextBoldEx(latinFont, cjkFont, text, textPos, (float)fontSize, spacing, color);
+}
+
+int FitFontSizeToWidth(const char *text, int fontSize, int minFontSize, float spacing, float maxWidth)
+{
+    int fittedSize = fontSize;
+
+    while (fittedSize > minFontSize && MeasureTextStrongSpaced(text, fittedSize, spacing).x > maxWidth)
+    {
+        fittedSize--;
+    }
+
+    return fittedSize;
+}
+
+void DrawTextStrongFit(const char *text, int x, int y, int fontSize, int minFontSize, float spacing, float maxWidth, Color color, Color shadowColor)
+{
+    int fittedSize = FitFontSizeToWidth(text, fontSize, minFontSize, spacing, maxWidth);
+
+    if (spacing == 1.0f)
+    {
+        DrawTextStrong(text, x, y, fittedSize, color, shadowColor);
+    }
+    else
+    {
+        DrawTextStrongSpaced(text, x, y, fittedSize, spacing, color, shadowColor);
+    }
+}
+
+void DrawLanguageFlag(Language language, Rectangle bounds)
+{
+    DrawRectangleRounded(bounds, 0.18f, 6, RAYWHITE);
+
+    if (language == LANGUAGE_PT_BR)
+    {
+        /* Bandeira do Brasil no estilo do emoji: fundo verde, losango
+         * amarelo ocupando quase toda a moldura, globo azul com a faixa
+         * branca e algumas estrelas, para ficar claramente reconhecível
+         * mesmo no tamanho pequeno do botão de idioma. */
+        DrawRectangleRec(bounds, (Color){ 0, 155, 68, 255 });
+
+        float marginX = bounds.width * 0.04f;
+        float marginY = bounds.height * 0.06f;
+        Vector2 top = { bounds.x + bounds.width * 0.5f, bounds.y + marginY };
+        Vector2 right = { bounds.x + bounds.width - marginX, bounds.y + bounds.height * 0.5f };
+        Vector2 bottom = { bounds.x + bounds.width * 0.5f, bounds.y + bounds.height - marginY };
+        Vector2 left = { bounds.x + marginX, bounds.y + bounds.height * 0.5f };
+        Vector2 center = { bounds.x + bounds.width * 0.5f, bounds.y + bounds.height * 0.5f };
+
+        DrawTriangle(top, right, bottom, (Color){ 255, 205, 0, 255 });
+        DrawTriangle(top, bottom, left, (Color){ 255, 205, 0, 255 });
+
+        float globeRadius = bounds.height * 0.30f;
+        DrawCircleV(center, globeRadius, (Color){ 30, 75, 165, 255 });
+        /* Faixa branca central com leve inclinação, como na bandeira real. */
+        DrawLineEx(
+            (Vector2){ center.x - globeRadius * 0.95f, center.y - globeRadius * 0.12f },
+            (Vector2){ center.x + globeRadius * 0.95f, center.y + globeRadius * 0.30f },
+            fmaxf(1.5f, bounds.height * 0.07f),
+            RAYWHITE
+        );
+        /* Pequenas estrelas para reforçar o padrão do globo. */
+        DrawCircleV((Vector2){ center.x - globeRadius * 0.35f, center.y - globeRadius * 0.45f }, fmaxf(0.6f, bounds.height * 0.02f), RAYWHITE);
+        DrawCircleV((Vector2){ center.x + globeRadius * 0.15f, center.y - globeRadius * 0.55f }, fmaxf(0.6f, bounds.height * 0.02f), RAYWHITE);
+        DrawCircleV((Vector2){ center.x + globeRadius * 0.5f, center.y + globeRadius * 0.05f }, fmaxf(0.6f, bounds.height * 0.02f), RAYWHITE);
+        DrawCircleLinesV(center, globeRadius, Fade(BLACK, 0.35f));
+    }
+    else if (language == LANGUAGE_ES)
+    {
+        Color spainRed = (Color){ 173, 21, 35, 255 };
+        Color spainYellow = (Color){ 255, 196, 0, 255 };
+        DrawRectangleRec((Rectangle){ bounds.x, bounds.y, bounds.width, bounds.height * 0.25f }, spainRed);
+        DrawRectangleRec((Rectangle){ bounds.x, bounds.y + bounds.height * 0.25f, bounds.width, bounds.height * 0.5f }, spainYellow);
+        DrawRectangleRec((Rectangle){ bounds.x, bounds.y + bounds.height * 0.75f, bounds.width, bounds.height * 0.25f }, spainRed);
+        DrawRectangleRec((Rectangle){ bounds.x + bounds.width * 0.14f, bounds.y + bounds.height * 0.32f, bounds.width * 0.18f, bounds.height * 0.36f }, Fade(spainRed, 0.85f));
+    }
+    else if (language == LANGUAGE_EN)
+    {
+        for (int stripe = 0; stripe < 7; stripe++)
+        {
+            Color stripeColor = (stripe % 2 == 0) ? (Color){ 190, 20, 40, 255 } : RAYWHITE;
+            DrawRectangleRec((Rectangle){ bounds.x, bounds.y + (float)stripe * bounds.height / 7.0f, bounds.width, bounds.height / 7.0f }, stripeColor);
+        }
+        DrawRectangleRec((Rectangle){ bounds.x, bounds.y, bounds.width * 0.45f, bounds.height * 0.55f }, (Color){ 30, 55, 130, 255 });
+    }
+    else
+    {
+        DrawRectangleRec(bounds, RAYWHITE);
+        DrawCircle((int)(bounds.x + bounds.width * 0.5f), (int)(bounds.y + bounds.height * 0.5f), bounds.height * 0.25f, (Color){ 210, 35, 55, 255 });
+        DrawCircle((int)(bounds.x + bounds.width * 0.5f), (int)(bounds.y + bounds.height * 0.58f), bounds.height * 0.22f, (Color){ 20, 65, 160, 255 });
+    }
+
+    DrawRectangleRoundedLinesEx(bounds, 0.18f, 6, 1.0f, Fade(BLACK, 0.45f));
+}
+Rectangle GetLanguageButtonRect(int languageIndex)
+{
+    float scale = GetUIScale();
+    float gap = 6.0f * scale;
+    float w = (float)GetScreenWidth();
+
+    if (IsCompactLayout())
+    {
+        /* A single compact row sits below the logo. It scales down with the
+         * window, so all four language buttons remain inside the viewport. */
+        float buttonWidth = (w - (28.0f * scale) - (3.0f * gap)) / 4.0f;
+        buttonWidth = fmaxf(62.0f * scale, buttonWidth);
+        return (Rectangle){
+            14.0f * scale + languageIndex * (buttonWidth + gap),
+            45.0f * scale,
+            buttonWidth,
+            28.0f * scale
+        };
+    }
+
+    float maxWidth = 112.0f * scale;
+    float minWidth = 78.0f * scale;
+    float available = w - (300.0f * scale);
+    float buttonWidth = fminf(maxWidth, fmaxf(minWidth, (available - (3.0f * gap)) / 4.0f));
+    float totalWidth = (4.0f * buttonWidth) + (3.0f * gap);
+    float startX = w - totalWidth - (16.0f * scale);
+
+    return (Rectangle){
+        startX + ((float)languageIndex * (buttonWidth + gap)),
+        16.0f * scale,
+        buttonWidth,
+        34.0f * scale
+    };
+}
+
+bool HandleLanguageButtons(void)
+{
+    if (!IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+    {
+        return false;
+    }
+
+    Vector2 mousePosition = GetMousePosition();
+    for (int i = 0; i < (int)LANGUAGE_COUNT; i++)
+    {
+        if (CheckCollisionPointRec(mousePosition, GetLanguageButtonRect(i)))
+        {
+            currentLanguage = (Language)i;
+            return true;
+        }
+    }
+
+    return false;
+}
+void DrawLanguageButtons(void)
+{
+    Vector2 mousePosition = GetMousePosition();
+    float scale = GetUIScale();
+
+    for (int i = 0; i < (int)LANGUAGE_COUNT; i++)
+    {
+        Rectangle button = GetLanguageButtonRect(i);
+        bool selected = currentLanguage == (Language)i;
+        bool hovered = CheckCollisionPointRec(mousePosition, button);
+        Color fillColor = selected ? (Color){ 18, 34, 88, 245 } : (Color){ 5, 14, 40, 235 };
+        Color borderColor = selected ? (Color){ 130, 105, 255, 255 } : Fade(HUD_BORDER_COLOR, 0.65f);
+        const char *label = uiText[i][TEXT_LANGUAGE_BUTTON];
+
+        if (hovered && !selected)
+        {
+            fillColor = (Color){ 12, 28, 68, 245 };
+            borderColor = HUD_BORDER_COLOR;
+        }
+
+        DrawRectangleRounded(button, 0.16f, 8, fillColor);
+        DrawRectangleRoundedLinesEx(
+            button, 0.16f, 8,
+            selected ? 2.0f * scale : 1.0f * scale,
+            borderColor
+        );
+
+        /*
+         * Reserve a dedicated area for the flag.  PT-BR is the longest label,
+         * so its font is fitted independently instead of colliding with the
+         * flag or touching the border.
+         */
+        float flagWidth = 30.0f * scale;
+        float flagHeight = 21.0f * scale;
+        float flagRight = 7.0f * scale;
+        float labelLeft = 10.0f * scale;
+        float labelRight = flagRight + flagWidth + 7.0f * scale;
+        float labelMaxWidth = button.width - labelLeft - labelRight;
+
+        int fontSize = FitFontSizeToWidth(
+            label,
+            ScaleFontSize(13.0f),
+            ScaleFontSize(8.0f),
+            0.35f * scale,
+            labelMaxWidth
+        );
+
+        float labelWidth = MeasureTextStrongSpaced(
+            label, fontSize, 0.35f * scale
+        ).x;
+
+        float labelX = button.x + labelLeft;
+        if (labelWidth < labelMaxWidth)
+        {
+            labelX += (labelMaxWidth - labelWidth) * 0.5f;
+        }
+
+        float labelY = button.y + (button.height - (float)fontSize * 1.15f) * 0.5f;
+
+        DrawTextStrongSpaced(
+            label,
+            (int)labelX,
+            (int)labelY,
+            fontSize,
+            0.35f * scale,
+            RAYWHITE,
+            BLACK
+        );
+
+        Rectangle flag = {
+            button.x + button.width - flagRight - flagWidth,
+            button.y + (button.height - flagHeight) * 0.5f,
+            flagWidth,
+            flagHeight
+        };
+
+        DrawLanguageFlag((Language)i, flag);
+    }
 }
 
 /* Measures multiline text drawn with DrawTextStrongSpaced so panels can
  * size themselves around it instead of guessing a fixed height. */
 Vector2 MeasureTextStrongSpaced(const char *text, int fontSize, float spacing)
 {
-    Font font = GetUIFont();
-    return MeasureTextEx(font, text, (float)fontSize, spacing);
+    Font latinFont = GetUILatinFont();
+    Font cjkFont = GetUIFont();
+    float lineHeight = (float)fontSize * 1.4f;
+    float maxWidth = 0.0f;
+    int lineCount = 1;
+    char lineBuf[512];
+    int textLen = (int)strlen(text);
+    int lineStart = 0;
+
+    for (int i = 0; i <= textLen; i++)
+    {
+        if (text[i] != '\n' && text[i] != '\0')
+        {
+            continue;
+        }
+
+        int lineLen = i - lineStart;
+        if (lineLen > 511)
+        {
+            lineLen = 511;
+        }
+        memcpy(lineBuf, &text[lineStart], lineLen);
+        lineBuf[lineLen] = '\0';
+
+        Vector2 size = MeasureMixedLine(latinFont, cjkFont, lineBuf, (float)fontSize, spacing);
+        if (size.x > maxWidth)
+        {
+            maxWidth = size.x;
+        }
+
+        lineStart = i + 1;
+        if (text[i] == '\n')
+        {
+            lineCount++;
+        }
+    }
+
+    return (Vector2){ maxWidth, lineCount * lineHeight };
 }
 
 void DrawMazeGrid(void)
@@ -605,8 +1619,14 @@ void DrawMazeGrid(void)
         (GRID_HEIGTH * drawTileSize) + (drawTileSize * 0.7f)
     };
 
-    DrawRectangleRounded(mazeFrame, 0.02f, 8, MAZE_SHADOW_COLOR);
-    DrawRectangleRoundedLinesEx(mazeFrame, 0.02f, 8, 2.0f, Fade(HUD_BORDER_COLOR, 0.45f));
+    DrawRectangleRounded(mazeFrame, 0.05f, 10, MAZE_SHADOW_COLOR);
+    /* Glowing rounded border, blue on the top-left fading to purple on the
+     * bottom-right, echoing the reference dashboard's frame glow. Layered
+     * outlines (soft, wide, faded outward + a crisp inner line) fake the
+     * soft-glow look without needing shaders or image assets. */
+    DrawRectangleRoundedLinesEx((Rectangle){ mazeFrame.x - 3.0f, mazeFrame.y - 3.0f, mazeFrame.width + 6.0f, mazeFrame.height + 6.0f }, 0.05f, 10, 6.0f, Fade(HUD_ACCENT_COLOR, 0.18f));
+    DrawRectangleRoundedLinesEx((Rectangle){ mazeFrame.x - 1.5f, mazeFrame.y - 1.5f, mazeFrame.width + 3.0f, mazeFrame.height + 3.0f }, 0.05f, 10, 3.0f, Fade(HUD_BORDER_COLOR, 0.35f));
+    DrawRectangleRoundedLinesEx(mazeFrame, 0.05f, 10, 2.0f, HUD_BORDER_COLOR);
 
     for (int y = 0; y < GRID_HEIGTH; y++)
     {
@@ -662,28 +1682,233 @@ bool IsWallCell(int x, int y)
     return grid[y][x] == CELL_WALL;
 }
 
-bool IsPositionBlocked(Vector2 position, float radius)
+/* True circle-vs-tile overlap test: finds the closest point of the wall
+ * cell's rectangle to the circle's center and checks if that point is
+ * actually inside the circle. This lets the player hug a wall and only
+ * get blocked once it truly touches it, instead of the old bounding-box
+ * check which blocked movement early (including on the empty corner of a
+ * diagonal cell that the circle never actually reached). */
+bool CircleOverlapsWallCell(Vector2 center, float radius, int cellX, int cellY)
 {
-    int left = (int)(position.x - radius) / TILE_SIZE;
-    int right = (int)(position.x + radius) / TILE_SIZE;
-    int top = (int)(position.y - radius) / TILE_SIZE;
-    int bottom = (int)(position.y + radius) / TILE_SIZE;
+    if (!IsWallCell(cellX, cellY))
+    {
+        return false;
+    }
 
-    if (IsWallCell(left, top)) return true;
-    if (IsWallCell(right, top)) return true;
-    if (IsWallCell(left, bottom)) return true;
-    if (IsWallCell(right, bottom)) return true;
+    float cellLeft = (float)(cellX * TILE_SIZE);
+    float cellTop = (float)(cellY * TILE_SIZE);
+    float cellRight = cellLeft + TILE_SIZE;
+    float cellBottom = cellTop + TILE_SIZE;
+
+    float closestX = fmaxf(cellLeft, fminf(center.x, cellRight));
+    float closestY = fmaxf(cellTop, fminf(center.y, cellBottom));
+
+    float dx = center.x - closestX;
+    float dy = center.y - closestY;
+
+    return (dx * dx + dy * dy) < (radius * radius);
+}
+
+bool IsPointInRectangleInclusive(Vector2 point, Rectangle rectangle)
+{
+    return point.x >= rectangle.x && point.x <= rectangle.x + rectangle.width &&
+           point.y >= rectangle.y && point.y <= rectangle.y + rectangle.height;
+}
+
+bool TriangleOverlapsRectangle(TriangleHitbox triangle, Rectangle rectangle)
+{
+    Vector2 topLeft = { rectangle.x, rectangle.y };
+    Vector2 topRight = { rectangle.x + rectangle.width, rectangle.y };
+    Vector2 bottomRight = { rectangle.x + rectangle.width, rectangle.y + rectangle.height };
+    Vector2 bottomLeft = { rectangle.x, rectangle.y + rectangle.height };
+    Vector2 trianglePoints[3] = { triangle.tip, triangle.right, triangle.left };
+    Vector2 rectanglePoints[4] = { topLeft, topRight, bottomRight, bottomLeft };
+
+    for (int i = 0; i < 3; i++)
+    {
+        if (IsPointInRectangleInclusive(trianglePoints[i], rectangle))
+        {
+            return true;
+        }
+    }
+
+    for (int i = 0; i < 4; i++)
+    {
+        if (IsPointInTriangle(rectanglePoints[i], triangle.tip, triangle.right, triangle.left))
+        {
+            return true;
+        }
+    }
+
+    for (int triangleEdge = 0; triangleEdge < 3; triangleEdge++)
+    {
+        Vector2 triangleStart = trianglePoints[triangleEdge];
+        Vector2 triangleEnd = trianglePoints[(triangleEdge + 1) % 3];
+
+        for (int rectangleEdge = 0; rectangleEdge < 4; rectangleEdge++)
+        {
+            Vector2 rectangleStart = rectanglePoints[rectangleEdge];
+            Vector2 rectangleEnd = rectanglePoints[(rectangleEdge + 1) % 4];
+
+            if (DoSegmentsIntersect(triangleStart, triangleEnd, rectangleStart, rectangleEnd))
+            {
+                return true;
+            }
+        }
+    }
 
     return false;
+}
+
+bool TriangleOverlapsWallCell(TriangleHitbox triangle, int cellX, int cellY)
+{
+    if (!IsWallCell(cellX, cellY))
+    {
+        return false;
+    }
+
+    Rectangle cellRectangle = {
+        (float)(cellX * TILE_SIZE) + PLAYER_COLLISION_SKIN,
+        (float)(cellY * TILE_SIZE) + PLAYER_COLLISION_SKIN,
+        TILE_SIZE - PLAYER_COLLISION_SKIN * 2.0f,
+        TILE_SIZE - PLAYER_COLLISION_SKIN * 2.0f
+    };
+
+    return TriangleOverlapsRectangle(triangle, cellRectangle);
+}
+
+bool IsPositionBlocked(Vector2 position, float radius)
+{
+    int left = (int)floorf((position.x - radius) / TILE_SIZE);
+    int right = (int)floorf((position.x + radius) / TILE_SIZE);
+    int top = (int)floorf((position.y - radius) / TILE_SIZE);
+    int bottom = (int)floorf((position.y + radius) / TILE_SIZE);
+
+    for (int y = top; y <= bottom; y++)
+    {
+        for (int x = left; x <= right; x++)
+        {
+            if (CircleOverlapsWallCell(position, radius, x, y))
+            {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+bool IsPlayerPositionBlocked(Vector2 position)
+{
+    float radius = player.radius * PLAYER_WALL_RADIUS_SCALE;
+    int left = (int)floorf((position.x - radius) / TILE_SIZE);
+    int right = (int)floorf((position.x + radius) / TILE_SIZE);
+    int top = (int)floorf((position.y - radius) / TILE_SIZE);
+    int bottom = (int)floorf((position.y + radius) / TILE_SIZE);
+
+    for (int y = top; y <= bottom; y++)
+    {
+        for (int x = left; x <= right; x++)
+        {
+            if (CircleOverlapsWallCell(position, radius, x, y))
+            {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+bool CircleOverlapsTriangle(Vector2 center, float radius, TriangleHitbox triangle)
+{
+    if (IsPointInTriangle(center, triangle.tip, triangle.right, triangle.left))
+    {
+        return true;
+    }
+
+    return GetPointSegmentDistance(center, triangle.tip, triangle.right) <= radius ||
+           GetPointSegmentDistance(center, triangle.right, triangle.left) <= radius ||
+           GetPointSegmentDistance(center, triangle.left, triangle.tip) <= radius;
+}
+
+bool TryMovePlayerTo(Vector2 position)
+{
+    if (IsPlayerPositionBlocked(position))
+    {
+        return false;
+    }
+
+    player.position = position;
+    return true;
+}
+
+void MovePlayerCollisionStep(Vector2 stepDelta)
+{
+    Vector2 startPosition = player.position;
+    Vector2 fullPosition = {
+        startPosition.x + stepDelta.x,
+        startPosition.y + stepDelta.y
+    };
+
+    if (TryMovePlayerTo(fullPosition))
+    {
+        return;
+    }
+
+    bool tryXFirst = fabsf(stepDelta.x) >= fabsf(stepDelta.y);
+
+    for (int attempt = 0; attempt < 2; attempt++)
+    {
+        bool moveX = (attempt == 0) ? tryXFirst : !tryXFirst;
+        Vector2 axisPosition = player.position;
+
+        if (moveX)
+        {
+            axisPosition.x += stepDelta.x;
+        }
+        else
+        {
+            axisPosition.y += stepDelta.y;
+        }
+
+        TryMovePlayerTo(axisPosition);
+    }
+}
+
+void MovePlayerWithCollision(Vector2 direction, float distance)
+{
+    Vector2 totalDelta = {
+        direction.x * distance,
+        direction.y * distance
+    };
+    float maxDelta = fmaxf(fabsf(totalDelta.x), fabsf(totalDelta.y));
+    int steps = (int)ceilf(maxDelta / PLAYER_COLLISION_STEP);
+
+    if (steps < 1)
+    {
+        steps = 1;
+    }
+
+    Vector2 stepDelta = {
+        totalDelta.x / (float)steps,
+        totalDelta.y / (float)steps
+    };
+
+    for (int i = 0; i < steps; i++)
+    {
+        MovePlayerCollisionStep(stepDelta);
+    }
 }
 
 void InitPlayer(void)
 {
     player.radius = 8.0f;
-    player.speed = 65.0f;
+    player.speed = 58.0f;
     player.facingAngle = 0.0f;
     player.position.x = TILE_SIZE * 1.5f;
     player.position.y = TILE_SIZE * 1.5f;
+    playerStartAuraVisible = true;
 }
 
 void UpdatePlayer(void)
@@ -697,27 +1922,14 @@ void UpdatePlayer(void)
 
     if (movement.x != 0.0f || movement.y != 0.0f)
     {
+        playerStartAuraVisible = false;
+
         float length = sqrtf(movement.x * movement.x + movement.y * movement.y);
         movement.x /= length;
         movement.y /= length;
         player.facingAngle = atan2f(movement.y, movement.x);
 
-        float frameSpeed = player.speed * GetFrameTime();
-        Vector2 nextPosition = player.position;
-
-        nextPosition.x += movement.x * frameSpeed;
-        if (!IsPositionBlocked(nextPosition, player.radius))
-        {
-            player.position.x = nextPosition.x;
-        }
-
-        nextPosition = player.position;
-        nextPosition.y += movement.y * frameSpeed;
-
-        if (!IsPositionBlocked(nextPosition, player.radius))
-        {
-            player.position.y = nextPosition.y;
-        }
+        MovePlayerWithCollision(movement, player.speed * GetStableFrameTime());
     }
 }
 
@@ -743,7 +1955,7 @@ void UpdateFlashlight(void)
 
     if (flashlightOn)
     {
-        flashlightBattery -= GetFrameTime();
+        flashlightBattery -= 2.0f * GetStableFrameTime();
 
         if (flashlightBattery <= 0.0f)
         {
@@ -1004,7 +2216,7 @@ void InitBullets(void)
     }
 }
 
-void SpawnBullet(Vector2 position, Vector2 direction, float speed, bool fromPlayer)
+void SpawnBulletInternal(Vector2 position, Vector2 direction, float speed, bool fromPlayer, bool fromBoss)
 {
     for (int i = 0; i < MAX_BULLETS; i++)
     {
@@ -1016,6 +2228,7 @@ void SpawnBullet(Vector2 position, Vector2 direction, float speed, bool fromPlay
             bullets[i].speed = speed;
             bullets[i].radius = BULLET_RADIUS;
             bullets[i].fromPlayer = fromPlayer;
+            bullets[i].fromBoss = fromBoss;
             if (gameAudioLoaded)
             {
                 PlaySound(fromPlayer ? playerShotSound : enemyShotSound);
@@ -1023,6 +2236,16 @@ void SpawnBullet(Vector2 position, Vector2 direction, float speed, bool fromPlay
             break;
         }
     }
+}
+
+void SpawnBullet(Vector2 position, Vector2 direction, float speed, bool fromPlayer)
+{
+    SpawnBulletInternal(position, direction, speed, fromPlayer, false);
+}
+
+void SpawnBossBullet(Vector2 position, Vector2 direction)
+{
+    SpawnBulletInternal(position, direction, BOSS_BULLET_SPEED, false, true);
 }
 
 void InitEnemies(void)
@@ -1171,21 +2394,29 @@ const char *GetIntroBody(void)
     {
         return "Goal: guide the yellow triangle to the green exit.\n"
                "Move with WASD or arrow keys.\n"
-               "Shoot with SPACE, reload with R, change language with L.\n"
+               "Shoot with SPACE, reload with R, and use the top buttons for language.\n"
                "Enemies remove health, shots can knock them out for 5 seconds.\n"
                "Each tutorial step introduces one part of the game.";
+    }
+    if (currentLanguage == LANGUAGE_ES)
+    {
+        return "Objetivo: lleva el triangulo amarillo hasta la salida verde.\n"
+               "Muevete con WASD o las flechas.\n"
+               "Dispara con ESPACIO, recarga con R y usa los botones de arriba para el idioma.\n"
+               "Los enemigos quitan vida; los disparos pueden dejarlos K.O. por 5 segundos.\n"
+               "Cada tutorial presenta una parte del juego.";
     }
     if (currentLanguage == LANGUAGE_KO)
     {
         return "목표: 노란 삼각형을 초록 출구까지 이동하세요.\n"
                "WASD 또는 방향키로 움직입니다.\n"
-               "스페이스로 발사, R로 재장전, L로 언어를 바꿉니다.\n"
+               "스페이스로 발사, R로 재장전, 위 버튼으로 언어를 바꿉니다.\n"
                "적에게 닿으면 체력이 감소하고, 총알은 적을 5초 동안 기절시킵니다.\n"
                "튜토리얼은 게임의 규칙을 단계별로 알려줍니다.";
     }
     return "Objetivo: leve o triangulo amarelo ate a saida verde.\n"
            "Mova com WASD ou setas.\n"
-           "Atire com ESPACO, recarregue com R e mude idioma com L.\n"
+           "Atire com ESPACO, recarregue com R e use os botoes do topo para idioma.\n"
            "Inimigos tiram vida; tiros podem nocautea-los por 5 segundos.\n"
            "Cada tutorial apresenta uma parte do jogo.";
 }
@@ -1199,6 +2430,7 @@ const char *GetRoundInfoTitle(void)
     }
 
     if (currentLanguage == LANGUAGE_KO) return TextFormat("라운드 %d", officialRound);
+    if (currentLanguage == LANGUAGE_ES) return TextFormat("RONDA %d", officialRound);
     return TextFormat("ROUND %d", officialRound);
 }
 
@@ -1220,6 +2452,13 @@ const char *GetRoundInfoBody(void)
             if (tutorialRound == 3) return "손전등을 사용할 수 있습니다.\nC로 켜고 끕니다. 더 넓게 보이지만 배터리를 소모합니다.\n튜토리얼 라운드는 항상 배터리 100퍼센트로 시작합니다.\n모퉁이와 출구를 확인할 때 짧게 사용하세요.";
             return "보라색 사각형은 보스입니다.\n플레이어를 찾아오고, 일직선이면 쏘며, 멀어지면 빨라집니다.\n보스도 5번 맞으면 5초 동안 기절합니다.\n게임은 두 명 넘는 적이 동시에 플레이어를 막지 않게 조정합니다.";
         }
+        if (currentLanguage == LANGUAGE_ES)
+        {
+            if (tutorialRound == 1) return "Los enemigos rojos patrullan el laberinto y persiguen de cerca.\nTocarlos causa 25 de dano, no muerte instantanea.\nTienes 100 de vida y quedas invulnerable un instante despues de recibir dano.\nNo te quedes quieto en los pasillos; avanza hacia la salida verde.";
+            if (tutorialRound == 2) return "Los enemigos rosas disparan.\nSi se alinean contigo en linea recta sin pared de por medio, se detienen y disparan.\nUsa ESPACIO para disparar. Cinco impactos dejan K.O. a cualquier enemigo por 5 segundos.\nTu arma tiene 15 balas; pulsa R para recargar.";
+            if (tutorialRound == 3) return "La linterna ya esta disponible.\nPulsa C para encenderla o apagarla. Revela mas del laberinto, pero gasta bateria.\nEn el tutorial, cada ronda empieza con 100 por ciento de bateria.\nUsala en rafagas cortas para revisar esquinas y encontrar la salida.";
+            return "El jefe morado es el enemigo cuadrado.\nCalcula el camino hacia ti, dispara cuando se alinea y acelera si esta lejos.\nTambien puede quedar K.O. por 5 segundos tras cinco impactos.\nEl juego limita el acoso para que mas de dos enemigos no te atrapen a la vez.";
+        }
 
         if (tutorialRound == 1) return "Inimigos vermelhos patrulham o labirinto e perseguem de perto.\nEncostar neles causa 25 de dano, nao morte instantanea.\nVoce tem 100 de vida e fica invulneravel por um instante apos dano.\nNao pare nos corredores; avance ate a saida verde.";
         if (tutorialRound == 2) return "Inimigos rosas atiram.\nSe ficarem alinhados com voce em linha reta sem parede, eles param e disparam.\nUse ESPACO para atirar. Cinco acertos nocauteiam qualquer inimigo por 5 segundos.\nSua arma tem 15 balas; pressione R para recarregar.";
@@ -1236,7 +2475,18 @@ const char *GetRoundInfoBody(void)
         if (officialRound == 8) return "Rounds 8 and 9 add every enemy type except flashlight darkness.\nRed enemies chase, pink enemies shoot, and the boss accelerates from far away.\nWatch the music volume: it rises when danger is close.";
         if (officialRound == 10) return "From round 10 on, everything is active: red, pink, boss, and flashlight.\nThe battery refills only on rounds 10, 15, 20, and so on.\nPlan routes before switching the flashlight off.";
         if (officialRound == 15) return "Difficulty ramp is now active.\nEnemies become faster and use pathfinding more often each round.\nKnockouts, reload timing, and battery control matter more from here.";
-        return "Cross the maze and reach the green exit.\nUse SPACE to shoot, R to reload, C for flashlight when available, and L for language.\nStay mobile and use knockouts to open a path.";
+        return "Cross the maze and reach the green exit.\nUse SPACE to shoot, R to reload, and C for flashlight when available.\nStay mobile and use knockouts to open a path.";
+    }
+    if (currentLanguage == LANGUAGE_ES)
+    {
+        if (officialRound == 1) return "La partida oficial empieza ahora.\nLas rondas 1 y 2 usan enemigos rojos de patrulla y rosas que disparan.\nEmpiezas con 100 de vida, 15 balas y bateria llena guardada para mas adelante.\nLlega a la salida verde para avanzar.";
+        if (officialRound == 3) return "Empiezan las rondas con linterna.\nLas rondas 3 y 4 tienen rojos, rosas y vision limitada.\nLa bateria no se recarga cada ronda; usala con cuidado.\nSe recarga en la ronda 5 y luego cada 5 rondas.";
+        if (officialRound == 5) return "La ronda 5 recarga la bateria de la linterna al 100 por ciento.\nEsta ronda se centra solo en el jefe morado.\nSigue moviendote, rompe la alineacion cuando dispare y acierta cinco veces para dejarlo K.O.";
+        if (officialRound == 6) return "Las rondas 6 y 7 combinan al jefe con enemigos rojos.\nEl jefe te persigue directo mientras los rojos presionan las rutas cercanas.\nUsa disparos para abrir espacio y evita quedar acorralado.";
+        if (officialRound == 8) return "Las rondas 8 y 9 suman todos los tipos de enemigo menos la oscuridad de la linterna.\nLos rojos persiguen, los rosas disparan y el jefe acelera cuando esta lejos.\nPresta atencion a la musica: sube cuando el peligro esta cerca.";
+        if (officialRound == 10) return "Desde la ronda 10, todo esta activo: rojo, rosa, jefe y linterna.\nLa bateria solo se recarga en las rondas 10, 15, 20 y asi sucesivamente.\nPlanea la ruta antes de apagar la linterna.";
+        if (officialRound == 15) return "La dificultad creciente ya esta activa.\nLos enemigos se vuelven mas rapidos y calculan camino con mas frecuencia cada ronda.\nEl K.O., el tiempo de recarga y la gestion de bateria importan mas desde aqui.";
+        return "Cruza el laberinto y llega a la salida verde.\nUsa ESPACIO para disparar, R para recargar y C para la linterna cuando este disponible.\nMantente en movimiento y usa los K.O. para abrir camino.";
     }
     if (currentLanguage == LANGUAGE_KO)
     {
@@ -1247,7 +2497,7 @@ const char *GetRoundInfoBody(void)
         if (officialRound == 8) return "라운드 8과 9에는 손전등 어둠을 제외한 모든 적이 나옵니다.\n빨간 적은 추격하고, 분홍 적은 쏘고, 보스는 멀면 빨라집니다.\n음악이 커지면 가까운 위험이 있다는 뜻입니다.";
         if (officialRound == 10) return "라운드 10부터는 빨간 적, 분홍 적, 보스, 손전등이 모두 활성화됩니다.\n배터리는 10, 15, 20 라운드처럼 5라운드마다만 충전됩니다.\n손전등을 끄기 전에 이동 경로를 확인하세요.";
         if (officialRound == 15) return "이제 난이도 상승이 시작됩니다.\n라운드가 올라갈수록 적이 더 빠르고 더 자주 길을 계산합니다.\n기절, 재장전 타이밍, 배터리 관리가 중요합니다.";
-        return "미로를 지나 초록 출구에 도착하세요.\n스페이스로 발사, R로 재장전, 가능할 때 C로 손전등, L로 언어 변경.\n계속 움직이고 기절 시간을 이용해 길을 여세요.";
+        return "미로를 지나 초록 출구에 도착하세요.\n스페이스로 발사, R로 재장전, 가능할 때 C로 손전등을 켭니다.\n계속 움직이고 기절 시간을 이용해 길을 여세요.";
     }
 
     if (officialRound == 1) return "A partida oficial comeca agora.\nRounds 1 e 2 usam inimigos vermelhos de patrulha e rosas atiradores.\nVoce inicia com 100 de vida, 15 balas e bateria cheia guardada para os proximos rounds.\nChegue na saida verde para avancar.";
@@ -1257,7 +2507,7 @@ const char *GetRoundInfoBody(void)
     if (officialRound == 8) return "Rounds 8 e 9 trazem todos os tipos de inimigo, mas sem escuridao da lanterna.\nVermelhos perseguem, rosas atiram e o chefao acelera quando esta longe.\nObserve a musica: ela aumenta quando o perigo esta perto.";
     if (officialRound == 10) return "Do round 10 em diante, tudo fica ativo: vermelho, rosa, chefao e lanterna.\nA bateria so recarrega nos rounds 10, 15, 20 e assim por diante.\nPlaneje o caminho antes de desligar a lanterna.";
     if (officialRound == 15) return "A dificuldade crescente esta ativa.\nOs inimigos ficam mais rapidos e usam caminho inteligente com mais frequencia a cada round.\nNocaute, recarga e controle da bateria passam a ser essenciais.";
-    return "Atravesse o labirinto e alcance a saida verde.\nUse ESPACO para atirar, R para recarregar, C para lanterna quando disponivel e L para idioma.\nMantenha movimento e use nocautes para abrir caminho.";
+    return "Atravesse o labirinto e alcance a saida verde.\nUse ESPACO para atirar, R para recarregar e C para lanterna quando disponivel.\nMantenha movimento e use nocautes para abrir caminho.";
 }
 
 bool ShouldShowRoundInfo(void)
@@ -1902,10 +3152,12 @@ void UpdateBossEnemy(void)
 
         if (IsEnemyAlignedWithPlayer(&bossEnemy, &shotDirection))
         {
-            Vector2 shotOrigin = bossEnemy.position;
-            shotOrigin.x += shotDirection.x * (bossEnemy.radius + 6.0f);
-            shotOrigin.y += shotDirection.y * (bossEnemy.radius + 6.0f);
-            SpawnBullet(shotOrigin, shotDirection, BOSS_BULLET_SPEED, false);
+            int bossCellX = (int)(bossEnemy.position.x / TILE_SIZE);
+            int bossCellY = (int)(bossEnemy.position.y / TILE_SIZE);
+            Vector2 shotOrigin = GetCellCenter(bossCellX, bossCellY);
+            shotOrigin.x += shotDirection.x * (bossEnemy.radius + BULLET_RADIUS + 3.0f);
+            shotOrigin.y += shotDirection.y * (bossEnemy.radius + BULLET_RADIUS + 3.0f);
+            SpawnBossBullet(shotOrigin, shotDirection);
             bossEnemy.shootPauseTimer = GetBossShootCooldown();
         }
     }
@@ -1981,12 +3233,12 @@ float GetNearestDangerousEnemyDistance(void)
 void InitGameAudio(void)
 {
     InitAudioDevice();
-    backgroundMusic = LoadMusicStream("src/guitar-loops.wav");
-    playerShotSound = LoadSound("src/laser-shot-player.wav");
-    enemyShotSound = LoadSound("src/aser-shot-enemy.wav");
-    playerReloadSound = LoadSound("src/recargapistola.wav");
-    victorySound = LoadSound("src/victory.wav");
-    gameOverSound = LoadSound("src/game_over.wav");
+    backgroundMusic = LoadMusicStream("src/assets/audio/guitar-loops.wav");
+    playerShotSound = LoadSound("src/assets/audio/laser-shot-player.wav");
+    enemyShotSound = LoadSound("src/assets/audio/aser-shot-enemy.wav");
+    playerReloadSound = LoadSound("src/assets/audio/recargapistola.wav");
+    victorySound = LoadSound("src/assets/audio/victory.wav");
+    gameOverSound = LoadSound("src/assets/audio/game_over.wav");
 
     SetMusicVolume(backgroundMusic, MUSIC_BASE_VOLUME);
     SetSoundVolume(playerShotSound, PLAYER_SHOT_VOLUME);
@@ -2043,7 +3295,7 @@ bool IsEnemyTouchingPlayer(Enemy *enemy)
         return false;
     }
 
-    return GetDistanceBetweenPoints(enemy->position, player.position) <= enemy->radius + player.radius;
+    return CircleOverlapsTriangle(enemy->position, enemy->radius, GetPlayerTriangleHitbox(player.position));
 }
 
 void DamagePlayer(int damage)
@@ -2186,11 +3438,7 @@ void UpdateBullets(void)
         }
         else
         {
-            float dx = player.position.x - bullets[i].position.x;
-            float dy = player.position.y - bullets[i].position.y;
-            float distance = sqrtf((dx * dx) + (dy * dy));
-
-            if (distance <= player.radius + bullets[i].radius)
+            if (CircleOverlapsTriangle(bullets[i].position, bullets[i].radius, GetPlayerTriangleHitbox(player.position)))
             {
                 bullets[i].active = false;
                 DamagePlayer(BLUE_BULLET_DAMAGE);
@@ -2213,132 +3461,492 @@ void ResetGame(void)
     roundNeedsSetup = true;
 }
 
-void DrawPlayerHealthBar(float x, float y)
+/* Small hex/circuit glyph drawn with plain primitives (no image assets,
+ * so it costs nothing in binary size) to echo the reference dashboard's
+ * corner icon. */
+void DrawHudIcon(Vector2 center, float radius, Color color)
 {
-    Rectangle barBackground = { x, y, 216.0f, 20.0f };
-    Rectangle barFill = barBackground;
-    Color healthColor = LIME;
+    DrawPolyLines(center, 6, radius, 0.0f, color);
+    DrawPolyLines(center, 6, radius * 0.62f, 0.0f, Fade(color, 0.7f));
+    DrawCircleV(center, radius * 0.16f, color);
+}
 
-    barFill.width = (barBackground.width * (float)playerHealth) / (float)PLAYER_MAX_HEALTH;
+/* Per-panel glyphs, each drawn with plain primitives (no image assets),
+ * echoing the distinct icon-per-panel look of the reference dashboard:
+ * a little monitor, a document, a heartbeat pulse, a crosshair and a
+ * keyboard key, instead of reusing the same hex glyph everywhere. */
+void DrawMonitorIcon(Vector2 center, float radius, Color color)
+{
+    Rectangle screen = { center.x - radius, center.y - radius * 0.75f, radius * 2.0f, radius * 1.35f };
+    DrawRectangleRoundedLinesEx(screen, 0.2f, 6, fmaxf(1.0f, radius * 0.16f), color);
+    DrawLineEx((Vector2){ center.x, center.y + radius * 0.6f }, (Vector2){ center.x, center.y + radius * 0.95f }, fmaxf(1.0f, radius * 0.16f), color);
+    DrawLineEx((Vector2){ center.x - radius * 0.5f, center.y + radius * 0.95f }, (Vector2){ center.x + radius * 0.5f, center.y + radius * 0.95f }, fmaxf(1.0f, radius * 0.16f), color);
+}
 
+void DrawDocumentIcon(Vector2 center, float radius, Color color)
+{
+    Rectangle page = { center.x - radius * 0.65f, center.y - radius, radius * 1.3f, radius * 2.0f };
+    DrawRectangleRoundedLinesEx(page, 0.2f, 6, fmaxf(1.0f, radius * 0.14f), color);
+    for (int i = 0; i < 3; i++)
+    {
+        float lineY = center.y - radius * 0.35f + (float)i * radius * 0.5f;
+        DrawLineEx((Vector2){ center.x - radius * 0.35f, lineY }, (Vector2){ center.x + radius * 0.35f, lineY }, fmaxf(1.0f, radius * 0.12f), Fade(color, 0.8f));
+    }
+}
+
+void DrawHeartbeatIcon(Vector2 center, float radius, Color color)
+{
+    Vector2 points[6] = {
+        { center.x - radius, center.y },
+        { center.x - radius * 0.4f, center.y },
+        { center.x - radius * 0.15f, center.y - radius * 0.8f },
+        { center.x + radius * 0.1f, center.y + radius * 0.8f },
+        { center.x + radius * 0.35f, center.y },
+        { center.x + radius, center.y }
+    };
+    for (int i = 0; i < 5; i++)
+    {
+        DrawLineEx(points[i], points[i + 1], fmaxf(1.0f, radius * 0.18f), color);
+    }
+}
+
+void DrawCrosshairIcon(Vector2 center, float radius, Color color)
+{
+    DrawCircleLinesV(center, radius, color);
+    DrawCircleLinesV(center, radius * 0.5f, Fade(color, 0.8f));
+    DrawLineEx((Vector2){ center.x - radius * 1.3f, center.y }, (Vector2){ center.x - radius * 0.65f, center.y }, fmaxf(1.0f, radius * 0.16f), color);
+    DrawLineEx((Vector2){ center.x + radius * 0.65f, center.y }, (Vector2){ center.x + radius * 1.3f, center.y }, fmaxf(1.0f, radius * 0.16f), color);
+    DrawLineEx((Vector2){ center.x, center.y - radius * 1.3f }, (Vector2){ center.x, center.y - radius * 0.65f }, fmaxf(1.0f, radius * 0.16f), color);
+    DrawLineEx((Vector2){ center.x, center.y + radius * 0.65f }, (Vector2){ center.x, center.y + radius * 1.3f }, fmaxf(1.0f, radius * 0.16f), color);
+}
+
+void DrawKeyboardIcon(Vector2 center, float radius, Color color)
+{
+    Rectangle body = { center.x - radius, center.y - radius * 0.65f, radius * 2.0f, radius * 1.3f };
+    DrawRectangleRoundedLinesEx(body, 0.25f, 6, fmaxf(1.0f, radius * 0.16f), color);
+    for (int row = 0; row < 2; row++)
+    {
+        for (int col = 0; col < 3; col++)
+        {
+            float kx = body.x + radius * 0.35f + (float)col * radius * 0.7f;
+            float ky = body.y + radius * 0.35f + (float)row * radius * 0.65f;
+            DrawCircleV((Vector2){ kx, ky }, fmaxf(0.8f, radius * 0.12f), Fade(color, 0.8f));
+        }
+    }
+}
+
+/* Segmented bar: a row of small rounded blocks instead of one solid fill,
+ * matching the reference HUD's "chip" style bars for ammo/health. Pure
+ * vector shapes, so it adds no asset weight. */
+void DrawSegmentedBar(float x, float y, float width, float height, int totalSegments, int filledSegments, Color filledColor, Color emptyColor, float scale)
+{
+    if (totalSegments < 1)
+    {
+        totalSegments = 1;
+    }
+
+    float gap = 3.0f * scale;
+    float segmentWidth = (width - (gap * (float)(totalSegments - 1))) / (float)totalSegments;
+
+    for (int i = 0; i < totalSegments; i++)
+    {
+        Rectangle segment = { x + (float)i * (segmentWidth + gap), y, segmentWidth, height };
+        Color segmentColor = (i < filledSegments) ? filledColor : emptyColor;
+        DrawRectangleRounded(segment, 0.35f, 4, segmentColor);
+    }
+}
+
+void DrawPlayerHealthBar(float x, float y, float width, float scale)
+{
+    Color healthColor = (Color){ 80, 230, 255, 255 };
+    int healthFontSize = ScaleFontSize(18.0f);
     float healthRatio = (PLAYER_MAX_HEALTH > 0) ? ((float)playerHealth / (float)PLAYER_MAX_HEALTH) : 0.0f;
+    int totalSegments = 10;
+    int filledSegments = (int)ceilf(healthRatio * (float)totalSegments);
 
     if (healthRatio <= 0.3f)
     {
-        healthColor = RED;
+        healthColor = (Color){ 255, 70, 90, 255 };
     }
     else if (healthRatio <= 0.6f)
     {
-        healthColor = ORANGE;
+        healthColor = (Color){ 255, 170, 60, 255 };
     }
 
-    DrawTextStrong(TextFormat(T(TEXT_HEALTH), playerHealth, PLAYER_MAX_HEALTH), (int)x, (int)(y - 24.0f), 18, RAYWHITE, BLACK);
-    DrawRectangleRounded(barBackground, 0.22f, 10, (Color){ 35, 35, 35, 255 });
-    DrawRectangleRounded(barFill, 0.35f, 10, healthColor);
-    DrawRectangleRoundedLinesEx(barBackground, 0.22f, 10, 2.0f, RAYWHITE);
+    DrawTextStrongFit(TextFormat(T(TEXT_HEALTH), playerHealth, PLAYER_MAX_HEALTH), (int)x, (int)(y - 25.0f * scale), healthFontSize, 12, 1.0f * scale, width, RAYWHITE, BLACK);
+    DrawSegmentedBar(x, y, width, 20.0f * scale, totalSegments, filledSegments, healthColor, (Color){ 30, 34, 52, 255 }, scale);
+}
+static void DrawTechPanel(Rectangle panel, Color accent)
+{
+    float scale = GetUIScale();
+    DrawRectangleRounded((Rectangle){ panel.x + 4.0f * scale, panel.y + 5.0f * scale, panel.width, panel.height }, 0.1f, 10, Fade(BLACK, 0.55f));
+    DrawRectangleRounded(panel, 0.1f, 10, HUD_PANEL_COLOR);
+    /* Soft outward glow (wide, faded) plus a crisp inner border, matching
+     * the reference dashboard's glowing panel outlines. */
+    DrawRectangleRoundedLinesEx((Rectangle){ panel.x - 2.0f, panel.y - 2.0f, panel.width + 4.0f, panel.height + 4.0f }, 0.1f, 10, 4.0f * scale, Fade(accent, 0.22f));
+    DrawRectangleRoundedLinesEx(panel, 0.1f, 10, 1.5f * scale, Fade(accent, 0.95f));
+    DrawLineEx((Vector2){ panel.x + 12.0f * scale, panel.y + 42.0f * scale },
+               (Vector2){ panel.x + panel.width - 12.0f * scale, panel.y + 42.0f * scale },
+               1.0f * scale, Fade(accent, 0.28f));
+}
+
+static void DrawKeyCap(const char *key, float x, float y, float width, float scale)
+{
+    Rectangle keyRect = { x, y, width, 29.0f * scale };
+    DrawRectangleRounded(keyRect, 0.14f, 5, (Color){ 13, 18, 48, 255 });
+    DrawRectangleRoundedLinesEx(keyRect, 0.14f, 5, 1.5f * scale, HUD_ACCENT_COLOR);
+    int size = ScaleFontSize(12.0f);
+    float textWidth = MeasureTextStrongSpaced(key, size, 1.0f * scale).x;
+    DrawTextStrongSpaced(key, (int)(x + (width - textWidth) * 0.5f), (int)(y + 7.0f * scale), size, 0.8f * scale, RAYWHITE, BLACK);
+}
+
+static float GetMapExploredPercent(void)
+{
+    int visibleCells = 0;
+    int playableCells = 0;
+
+    for (int y = 0; y < GRID_HEIGTH; y++)
+    {
+        for (int x = 0; x < GRID_WIDTH; x++)
+        {
+            if (grid[y][x] != CELL_WALL)
+            {
+                playableCells++;
+                Vector2 center = { ((float)x + 0.5f) * TILE_SIZE, ((float)y + 0.5f) * TILE_SIZE };
+                if (IsWorldPositionVisible(center))
+                {
+                    visibleCells++;
+                }
+            }
+        }
+    }
+
+    if (playableCells == 0) return 0.0f;
+    return ((float)visibleCells / (float)playableCells) * 100.0f;
+}
+
+static void DrawDashboardBackground(void)
+{
+    int w = GetScreenWidth();
+    int h = GetScreenHeight();
+
+    DrawRectangleGradientV(0, 0, w, h, (Color){ 3, 7, 28, 255 }, (Color){ 1, 3, 16, 255 });
+
+    float scale = GetUIScale();
+    Color circuit = Fade(HUD_BORDER_COLOR, 0.18f);
+
+    for (int i = 0; i < 7; i++)
+    {
+        float y = (70.0f + i * 92.0f) * scale;
+        if (y >= h) break;
+        DrawLineEx((Vector2){ 12.0f * scale, y }, (Vector2){ 120.0f * scale, y }, 1.0f, circuit);
+        DrawLineEx((Vector2){ (float)w - 120.0f * scale, y }, (Vector2){ (float)w - 12.0f * scale, y }, 1.0f, circuit);
+    }
+
+    DrawLineEx((Vector2){ 18.0f * scale, 66.0f * scale }, (Vector2){ (float)w - 18.0f * scale, 66.0f * scale }, 1.0f, Fade(HUD_BORDER_COLOR, 0.35f));
+    DrawCircleV((Vector2){ 18.0f * scale, 66.0f * scale }, 2.0f * scale, HUD_BORDER_COLOR);
+    DrawCircleV((Vector2){ (float)w - 18.0f * scale, 66.0f * scale }, 2.0f * scale, HUD_ACCENT_COLOR);
+}
+
+static void DrawDashboardHeader(void)
+{
+    float scale = GetUIScale();
+    float x = 24.0f * scale;
+    float y = 14.0f * scale;
+
+    if (IsCompactLayout())
+    {
+        float logoWidth = 210.0f * scale;
+        float logoX = ((float)GetScreenWidth() - logoWidth) * 0.5f;
+        DrawTextStrongFit("BYTEMAZE", (int)logoX, (int)(y + 1.0f * scale),
+                          ScaleFontSize(18.0f), 14, 0.6f * scale, logoWidth,
+                          (Color){ 225, 240, 255, 255 }, BLACK);
+        return;
+    }
+
+    DrawTextStrongFit("BYTEMAZE", (int)x, (int)(y + 1.0f * scale),
+                      ScaleFontSize(22.0f), 16, 0.7f * scale, 260.0f * scale,
+                      (Color){ 225, 240, 255, 255 }, BLACK);
+}
+
+/* Small HUD round label + number switches between "TUTORIAL" (while
+ * inTutorialSequence) and the localized word for "ROUND", so the big
+ * number underneath is never ambiguous about which counter it shows -
+ * previously the label always said "ROUND" even during the tutorial,
+ * which read as if the official round counter was stuck. */
+const char *GetHudRoundLabel(void)
+{
+    if (inTutorialSequence)
+    {
+        return "TUTORIAL";
+    }
+
+    switch (currentLanguage)
+    {
+        case LANGUAGE_ES: return "RONDA";
+        case LANGUAGE_KO: return "라운드";
+        default: return "ROUND";
+    }
 }
 
 void DrawHud(void)
 {
-    /* Clear vertical rhythm: one purpose per row, a divider between the
-     * "brand" block and the stats block, and consistent left padding so
-     * nothing overlaps or crowds the row above/below it (the old layout
-     * used fixed y-values that collided once the title got bigger). */
-    float panelX = 12.0f;
-    float panelY = 10.0f;
-    float panelWidth = 304.0f;
-    float textX = panelX + 16.0f;
-    float rowY = panelY + 16.0f;
+    float scale = GetUIScale();
 
-    Rectangle panel = { panelX, panelY, panelWidth, currentRoundConfig.flashlightEnabled ? 448.0f : 374.0f };
+    /* On narrow/short windows the HUD becomes a compact two-row layout:
+     * status + ammo above the maze, controls + health below it. This keeps
+     * every panel inside the window and gives the maze the most space. */
+    if (IsCompactLayout())
+    {
+        float margin = 10.0f * scale;
+        float gap = 8.0f * scale;
+        float availableWidth = (float)GetScreenWidth() - margin * 2.0f;
+        float halfWidth = (availableWidth - gap) * 0.5f;
+        float panelY = 78.0f * scale;
+        float panelH = 74.0f * scale;
+        float pad = 10.0f * scale;
+        int small = ScaleFontSize(8.0f);
+        int medium = ScaleFontSize(10.0f);
+        int large = ScaleFontSize(15.0f);
 
-    DrawRectangleRounded(panel, 0.06f, 10, HUD_PANEL_COLOR);
-    DrawRectangleRoundedLinesEx(panel, 0.06f, 10, 2.0f, HUD_BORDER_COLOR);
+        Rectangle status = { margin, panelY, halfWidth, panelH };
+        Rectangle weapon = { margin + halfWidth + gap, panelY, halfWidth, panelH };
 
-    /* Title row */
-    DrawTextStrongSpaced("BYTEMAZE", (int)textX, (int)rowY, 26, 2.0f, (Color){ 80, 255, 140, 255 }, BLACK);
-    rowY += 34.0f;
-    DrawTextStrong(TextFormat("%lld bytes   %.2f%%", executableSizeBytes, executableUsagePercent), (int)textX, (int)rowY, 16, LIGHTGRAY, BLACK);
-    rowY += 26.0f;
+        DrawTechPanel(status, HUD_BORDER_COLOR);
+        DrawMonitorIcon((Vector2){ status.x + 16.0f * scale, status.y + 16.0f * scale }, 8.0f * scale, HUD_BORDER_COLOR);
+        DrawTextStrongFit(T(TEXT_HUD_STATUS_TITLE), (int)(status.x + 30.0f * scale), (int)(status.y + 8.0f * scale),
+                          medium, 7, 0.3f * scale, status.width - 40.0f * scale, HUD_BORDER_COLOR, BLACK);
+        DrawTextStrongSpaced(GetHudRoundLabel(), (int)(status.x + pad), (int)(status.y + 36.0f * scale),
+                             small, 0.3f * scale, RAYWHITE, BLACK);
+        DrawTextStrongFit(TextFormat("%d", inTutorialSequence ? tutorialRound : officialRound),
+                          (int)(status.x + pad), (int)(status.y + 47.0f * scale), large, 8, 0.3f * scale,
+                          status.width - 2.0f * pad, (Color){ 105, 180, 255, 255 }, BLACK);
 
-    DrawLineEx((Vector2){ panelX + 10.0f, rowY }, (Vector2){ panelX + panelWidth - 10.0f, rowY }, 1.0f, Fade(HUD_BORDER_COLOR, 0.4f));
-    rowY += 14.0f;
+        DrawTechPanel(weapon, HUD_BORDER_COLOR);
+        DrawCrosshairIcon((Vector2){ weapon.x + 16.0f * scale, weapon.y + 16.0f * scale }, 8.0f * scale, HUD_BORDER_COLOR);
+        DrawTextStrongFit(T(TEXT_HUD_WEAPON_TITLE), (int)(weapon.x + 30.0f * scale), (int)(weapon.y + 8.0f * scale),
+                          medium, 7, 0.3f * scale, weapon.width - 40.0f * scale, HUD_BORDER_COLOR, BLACK);
+        DrawTextStrongSpaced(T(TEXT_HUD_BALAS), (int)(weapon.x + pad), (int)(weapon.y + 36.0f * scale),
+                             small, 0.3f * scale, (Color){ 150, 190, 240, 255 }, BLACK);
+        DrawTextStrongFit(TextFormat("%d / %d", playerAmmo, PLAYER_MAX_AMMO),
+                          (int)(weapon.x + weapon.width - 65.0f * scale), (int)(weapon.y + 31.0f * scale),
+                          medium, 7, 0.3f * scale, 55.0f * scale, RAYWHITE, BLACK);
+        DrawSegmentedBar(weapon.x + pad, weapon.y + 51.0f * scale, weapon.width - 2.0f * pad, 8.0f * scale,
+                         PLAYER_MAX_AMMO, playerAmmo, (Color){ 45, 195, 255, 255 }, (Color){ 20, 35, 66, 255 }, scale);
 
-    /* Progress row */
-    DrawTextStrong(TextFormat(T(TEXT_BEST_ROUND), bestOfficialRound), (int)textX, (int)rowY, 18, GOLD, BLACK);
-    rowY += 26.0f;
-    DrawTextStrong(inTutorialSequence ? TextFormat(T(TEXT_TUTORIAL_PROGRESS), tutorialRound) : TextFormat(T(TEXT_ROUND_PROGRESS), officialRound), (int)textX, (int)rowY, 20, RAYWHITE, BLACK);
-    rowY += 48.0f;
+        float bottomY = (float)GetScreenHeight() - 92.0f * scale;
+        Rectangle vital = { margin, bottomY, halfWidth, 82.0f * scale };
+        Rectangle controls = { margin + halfWidth + gap, bottomY, halfWidth, 82.0f * scale };
 
-    /* Health row (label is drawn above its own bar inside the function) */
-    DrawPlayerHealthBar(textX, rowY);
-    rowY += 42.0f;
+        DrawTechPanel(vital, HUD_ACCENT_COLOR);
+        DrawHeartbeatIcon((Vector2){ vital.x + 16.0f * scale, vital.y + 16.0f * scale }, 8.0f * scale, HUD_ACCENT_COLOR);
+        DrawTextStrongFit(T(TEXT_HUD_VITAL_TITLE), (int)(vital.x + 30.0f * scale), (int)(vital.y + 8.0f * scale),
+                          medium, 7, 0.25f * scale, vital.width - 40.0f * scale, HUD_ACCENT_COLOR, BLACK);
+        DrawTextStrongSpaced(T(TEXT_HUD_VIDA), (int)(vital.x + pad), (int)(vital.y + 34.0f * scale),
+                             small, 0.3f * scale, (Color){ 150, 190, 240, 255 }, BLACK);
+        DrawTextStrongFit(TextFormat("%d/%d", playerHealth, PLAYER_MAX_HEALTH),
+                          (int)(vital.x + 48.0f * scale), (int)(vital.y + 30.0f * scale), medium, 7, 0.25f * scale,
+                          vital.width - 58.0f * scale, RAYWHITE, BLACK);
+        DrawSegmentedBar(vital.x + pad, vital.y + 50.0f * scale, vital.width - 2.0f * pad, 8.0f * scale,
+                         10, (int)ceilf(((float)playerHealth / PLAYER_MAX_HEALTH) * 10.0f),
+                         (Color){ 190, 70, 255, 255 }, (Color){ 35, 25, 60, 255 }, scale);
 
-    DrawLineEx((Vector2){ panelX + 10.0f, rowY }, (Vector2){ panelX + panelWidth - 10.0f, rowY }, 1.0f, Fade(HUD_BORDER_COLOR, 0.4f));
-    rowY += 14.0f;
+        DrawTechPanel(controls, HUD_ACCENT_COLOR);
+        DrawKeyboardIcon((Vector2){ controls.x + 16.0f * scale, controls.y + 16.0f * scale }, 8.0f * scale, HUD_ACCENT_COLOR);
+        DrawTextStrongFit(T(TEXT_HUD_CONTROLS_TITLE), (int)(controls.x + 30.0f * scale), (int)(controls.y + 8.0f * scale),
+                          medium, 7, 0.25f * scale, controls.width - 40.0f * scale, HUD_ACCENT_COLOR, BLACK);
+        DrawKeyCap("ESPACO", controls.x + pad, controls.y + 31.0f * scale, 54.0f * scale, scale);
+        DrawTextStrongFit(T(TEXT_HUD_ATIRAR), (int)(controls.x + 70.0f * scale), (int)(controls.y + 34.0f * scale),
+                          small, 7, 0.2f * scale, controls.width - 78.0f * scale, RAYWHITE, BLACK);
+        DrawKeyCap("R", controls.x + pad, controls.y + 50.0f * scale, 28.0f * scale, scale);
+        DrawTextStrongFit(T(TEXT_HUD_RECARREGAR), (int)(controls.x + 48.0f * scale), (int)(controls.y + 53.0f * scale),
+                          small, 7, 0.15f * scale, controls.width - 56.0f * scale, RAYWHITE, BLACK);
 
-    /* Controls row */
-    DrawTextStrong(T(TEXT_SHOOT), (int)textX, (int)rowY, 20, ORANGE, BLACK);
-    rowY += 28.0f;
-    DrawTextStrong(TextFormat(T(TEXT_AMMO), playerAmmo, PLAYER_MAX_AMMO), (int)textX, (int)rowY, 18, RAYWHITE, BLACK);
-    rowY += 22.0f;
+        return;
+    }
+
+    float leftX = 10.0f * scale;
+    float panelWidth = GetHudPanelWidth();
+    float gap = 10.0f * scale;
+    float y = 78.0f * scale;
+    float panelHeight = 130.0f * scale;
+    float pad = 15.0f * scale;
+    float contentWidth = panelWidth - 2.0f * pad;
+    int small = ScaleFontSize(10.0f);
+    int medium = ScaleFontSize(12.0f);
+    int large = ScaleFontSize(27.0f);
+
+    Rectangle status = { leftX, y, panelWidth, panelHeight };
+    DrawTechPanel(status, HUD_BORDER_COLOR);
+    DrawMonitorIcon((Vector2){ status.x + 18.0f * scale, status.y + 17.0f * scale }, 8.0f * scale, HUD_BORDER_COLOR);
+    DrawTextStrongFit(T(TEXT_HUD_STATUS_TITLE), (int)(status.x + 32.0f * scale), (int)(status.y + 11.0f * scale),
+                   small, ScaleFontSize(7.0f), 0.25f * scale, panelWidth - 44.0f * scale,
+                   HUD_BORDER_COLOR, BLACK);
+    DrawTextStrongSpaced(T(TEXT_HUD_MAIN_DATA), (int)(status.x + pad), (int)(status.y + 48.0f * scale),
+                   small, 0.3f * scale, (Color){ 150, 190, 240, 255 }, BLACK);
+    DrawTextStrongSpaced(GetHudRoundLabel(), (int)(status.x + pad), (int)(status.y + 68.0f * scale),
+                   small, 0.4f * scale, RAYWHITE, BLACK);
+    DrawTextStrongFit(TextFormat("%d", inTutorialSequence ? tutorialRound : officialRound),
+                      (int)(status.x + pad), (int)(status.y + 82.0f * scale),
+                      large, 10, 0.5f * scale, contentWidth,
+                      (Color){ 105, 180, 255, 255 }, BLACK);
+
+    y += panelHeight + gap;
+    Rectangle log = { leftX, y, panelWidth, 140.0f * scale };
+    DrawTechPanel(log, HUD_ACCENT_COLOR);
+    DrawDocumentIcon((Vector2){ log.x + 18.0f * scale, log.y + 17.0f * scale }, 8.0f * scale, HUD_ACCENT_COLOR);
+    DrawTextStrongFit(T(TEXT_HUD_LOG_TITLE), (int)(log.x + 32.0f * scale), (int)(log.y + 11.0f * scale),
+                   small, ScaleFontSize(7.0f), 0.25f * scale, panelWidth - 44.0f * scale,
+                   HUD_ACCENT_COLOR, BLACK);
+    DrawTextStrongSpaced(T(TEXT_HUD_EXECUTABLE), (int)(log.x + pad), (int)(log.y + 48.0f * scale),
+                   small, 0.3f * scale, (Color){ 150, 190, 240, 255 }, BLACK);
+    DrawTextStrongFit(TextFormat("%lld %s", executableSizeBytes, T(TEXT_HUD_BYTES)), (int)(log.x + pad), (int)(log.y + 64.0f * scale),
+                      medium, 9, 0.25f * scale, contentWidth, RAYWHITE, BLACK);
+    DrawTextStrongFit(TextFormat("%.2f%% %s", executableUsagePercent, T(TEXT_HUD_LIMIT)), (int)(log.x + pad), (int)(log.y + 86.0f * scale),
+                      medium, 9, 0.4f * scale, contentWidth, (Color){ 80, 200, 235, 255 }, BLACK);
+    DrawSegmentedBar(log.x + pad, log.y + 114.0f * scale, contentWidth, 10.0f * scale,
+                     10, (int)ceilf(fminf(executableUsagePercent, 100.0f) / 10.0f),
+                     (Color){ 50, 205, 255, 255 }, (Color){ 18, 28, 60, 255 }, scale);
+
+    y += log.height + gap;
+    float equalPanelHeight = 194.0f * scale;
+
+    Rectangle vital = { leftX, y, panelWidth, equalPanelHeight };
+    DrawTechPanel(vital, HUD_ACCENT_COLOR);
+    DrawHeartbeatIcon((Vector2){ vital.x + 18.0f * scale, vital.y + 17.0f * scale }, 8.0f * scale, HUD_ACCENT_COLOR);
+    DrawTextStrongFit(T(TEXT_HUD_VITAL_TITLE), (int)(vital.x + 32.0f * scale), (int)(vital.y + 11.0f * scale),
+                   medium, ScaleFontSize(8.0f), 0.25f * scale, vital.width - 44.0f * scale,
+                   HUD_ACCENT_COLOR, BLACK);
+    DrawTextStrongSpaced(T(TEXT_HUD_VIDA), (int)(vital.x + pad), (int)(vital.y + 54.0f * scale),
+                   medium, 0.3f * scale, (Color){ 150, 190, 240, 255 }, BLACK);
+    DrawTextStrongFit(TextFormat("%d/%d", playerHealth, PLAYER_MAX_HEALTH),
+                      (int)(vital.x + pad), (int)(vital.y + 78.0f * scale),
+                      large, ScaleFontSize(11.0f), 0.35f * scale, vital.width - 2.0f * pad, RAYWHITE, BLACK);
+    DrawSegmentedBar(vital.x + pad, vital.y + vital.height - 34.0f * scale, vital.width - 2.0f * pad, 14.0f * scale,
+                     10, (int)ceilf(((float)playerHealth / PLAYER_MAX_HEALTH) * 10.0f),
+                     (Color){ 190, 70, 255, 255 }, (Color){ 35, 25, 60, 255 }, scale);
+
+    float rightWidth = GetHudRightPanelWidth();
+    float rightX = (float)GetScreenWidth() - rightWidth - (10.0f * scale);
+    float rightContentWidth = rightWidth - 2.0f * pad;
+
+    Rectangle weapon = { rightX, 92.0f * scale, rightWidth, equalPanelHeight };
+    DrawTechPanel(weapon, HUD_BORDER_COLOR);
+    DrawCrosshairIcon((Vector2){ weapon.x + 18.0f * scale, weapon.y + 17.0f * scale }, 8.0f * scale, HUD_BORDER_COLOR);
+    DrawTextStrongFit(T(TEXT_HUD_WEAPON_TITLE), (int)(weapon.x + 32.0f * scale), (int)(weapon.y + 11.0f * scale),
+                   medium, ScaleFontSize(8.0f), 0.25f * scale, weapon.width - 44.0f * scale,
+                   HUD_BORDER_COLOR, BLACK);
+    DrawTextStrongSpaced(T(TEXT_HUD_BALAS), (int)(weapon.x + pad), (int)(weapon.y + 54.0f * scale),
+                   medium, 0.3f * scale, (Color){ 150, 190, 240, 255 }, BLACK);
+    DrawTextStrongFit(TextFormat("%d / %d", playerAmmo, PLAYER_MAX_AMMO),
+                      (int)(weapon.x + pad), (int)(weapon.y + 78.0f * scale),
+                      large, ScaleFontSize(11.0f), 0.35f * scale, rightContentWidth, RAYWHITE, BLACK);
+    DrawSegmentedBar(weapon.x + pad, weapon.y + weapon.height - 34.0f * scale, rightContentWidth, 14.0f * scale,
+                     PLAYER_MAX_AMMO, playerAmmo, (Color){ 45, 195, 255, 255 }, (Color){ 20, 35, 66, 255 }, scale);
     if (playerReloadTimer > 0.0f)
     {
-        DrawTextStrong(TextFormat(T(TEXT_RELOADING), playerReloadTimer), (int)textX, (int)rowY, 18, YELLOW, BLACK);
+        /* Reload animation: a horizontal sweep bar fills up under the ammo
+         * count while playerReloadTimer counts down, and the label pulses
+         * so a reload in progress is unmistakable at a glance. */
+        float reloadFraction = 1.0f - (playerReloadTimer / PLAYER_RELOAD_TIME);
+        DrawRectangleRounded((Rectangle){ weapon.x + pad, weapon.y + weapon.height - 34.0f * scale, rightContentWidth, 14.0f * scale }, 0.5f, 6, (Color){ 20, 35, 66, 255 });
+        DrawRectangleRounded((Rectangle){ weapon.x + pad, weapon.y + weapon.height - 34.0f * scale, rightContentWidth * reloadFraction, 14.0f * scale }, 0.5f, 6, (Color){ 255, 205, 60, 255 });
+        float pulse = 0.55f + 0.45f * sinf((float)GetTime() * 8.0f);
+        DrawTextStrongSpaced(TextFormat("%s %.1fs", T(TEXT_RELOAD_IN_PROGRESS), playerReloadTimer),
+                       (int)(weapon.x + pad), (int)(weapon.y + weapon.height - 58.0f * scale),
+                       small, 0.2f * scale, Fade((Color){ 255, 205, 60, 255 }, pulse), BLACK);
     }
-    else
-    {
-        DrawTextStrong(T(TEXT_RELOAD), (int)textX, (int)rowY, 18, SKYBLUE, BLACK);
-    }
-    rowY += 24.0f;
+
+    Rectangle controls = { rightX, weapon.y + weapon.height + gap, rightWidth, equalPanelHeight };
+    DrawTechPanel(controls, HUD_ACCENT_COLOR);
+    DrawKeyboardIcon((Vector2){ controls.x + 18.0f * scale, controls.y + 17.0f * scale }, 8.0f * scale, HUD_ACCENT_COLOR);
+    DrawTextStrongFit(T(TEXT_HUD_CONTROLS_TITLE), (int)(controls.x + 32.0f * scale), (int)(controls.y + 11.0f * scale),
+                   medium, ScaleFontSize(8.0f), 0.15f * scale, rightWidth - 44.0f * scale,
+                   HUD_ACCENT_COLOR, BLACK);
+    DrawTextStrongSpaced(T(TEXT_HUD_ATIRAR), (int)(controls.x + pad), (int)(controls.y + 54.0f * scale),
+                   small, 0.3f * scale, (Color){ 150, 190, 240, 255 }, BLACK);
+    DrawKeyCap("ESPACO", controls.x + pad, controls.y + 76.0f * scale, fminf(104.0f * scale, rightContentWidth), scale);
+    DrawTextStrongSpaced(T(TEXT_HUD_RECARREGAR), (int)(controls.x + pad), (int)(controls.y + 118.0f * scale),
+                   small, 0.3f * scale, (Color){ 150, 190, 240, 255 }, BLACK);
+    DrawKeyCap("R", controls.x + pad, controls.y + 140.0f * scale, 44.0f * scale, scale);
 
     if (currentRoundConfig.flashlightEnabled)
     {
-        DrawTextStrong(T(TEXT_FLASHLIGHT_CONTROL), (int)textX, (int)rowY, 18, GOLD, BLACK);
-        rowY += 24.0f;
-        DrawTextStrong(TextFormat(T(TEXT_FLASHLIGHT_STATE), flashlightOn ? T(TEXT_FLASHLIGHT_ON) : T(TEXT_FLASHLIGHT_OFF)), (int)textX, (int)rowY, 18, flashlightOn ? GREEN : GRAY, BLACK);
-        rowY += 24.0f;
-        DrawTextStrong(TextFormat(T(TEXT_BATTERY), flashlightBattery), (int)textX, (int)rowY, 18, GREEN, BLACK);
-        rowY += 24.0f;
+        DrawTextStrongFit(T(TEXT_HUD_LANTERNA), (int)(controls.x + 74.0f * scale), (int)(controls.y + 143.0f * scale),
+                       small, ScaleFontSize(6.0f), 0.2f * scale, rightContentWidth - 76.0f * scale, HUD_ACCENT_COLOR, BLACK);
+        float batteryFraction = fmaxf(0.0f, fminf(1.0f, flashlightBattery / FLASHLIGHT_MAX_BATTERY));
+        DrawTextStrongFit(TextFormat("%.0f%%", flashlightBattery), (int)(controls.x + rightWidth - 62.0f * scale), (int)(controls.y + 143.0f * scale),
+                       small, 6, 0.2f * scale, 42.0f * scale, RAYWHITE, BLACK);
+        DrawSegmentedBar(controls.x + pad, controls.y + controls.height - 20.0f * scale, rightContentWidth, 8.0f * scale,
+                         10, (int)ceilf(batteryFraction * 10.0f),
+                         (Color){ 255, 205, 60, 255 }, (Color){ 60, 50, 20, 255 }, scale);
     }
-
-    DrawTextStrong(T(TEXT_LANGUAGE_HINT), (int)textX, (int)rowY, 15, LIGHTGRAY, BLACK);
 }
 
 void DrawGameOverOverlay(void)
 {
     const char *title = T(TEXT_GAME_OVER);
     const char *buttonText = T(TEXT_PLAY_AGAIN);
-    int titleFontSize = 42;
-    int buttonFontSize = 24;
-    int titleWidth = (int)MeasureTextStrongSpaced(title, titleFontSize, 1.0f).x;
-    int buttonTextWidth = (int)MeasureTextStrongSpaced(buttonText, buttonFontSize, 1.0f).x;
+    float scale = GetUIScale();
+    int titleFontSize = ScaleFontSize(42.0f);
+    int buttonFontSize = ScaleFontSize(24.0f);
     int screenWidth = GetScreenWidth();
     int screenHeight = GetScreenHeight();
-    int panelWidth = 420;
-    int panelHeight = 220;
+    float panelWidth = fminf((float)screenWidth - (40.0f * scale), 460.0f * scale);
+    float panelHeight = 240.0f * scale;
     Rectangle panel = {
-        (float)((screenWidth - panelWidth) / 2),
-        (float)((screenHeight - panelHeight) / 2),
-        (float)panelWidth,
-        (float)panelHeight
+        ((float)screenWidth - panelWidth) * 0.5f,
+        ((float)screenHeight - panelHeight) * 0.5f,
+        panelWidth,
+        panelHeight
     };
     Rectangle button = {
-        panel.x + 70.0f,
-        panel.y + 130.0f,
-        panel.width - 140.0f,
-        54.0f
+        panel.x + (70.0f * scale),
+        panel.y + (146.0f * scale),
+        panel.width - (140.0f * scale),
+        58.0f * scale
     };
+    titleFontSize = FitFontSizeToWidth(title, titleFontSize, ScaleFontSize(24.0f), 1.0f * scale, panel.width - (44.0f * scale));
+    buttonFontSize = FitFontSizeToWidth(buttonText, buttonFontSize, ScaleFontSize(15.0f), 1.0f * scale, button.width - (24.0f * scale));
+    int titleWidth = (int)MeasureTextStrongSpaced(title, titleFontSize, 1.0f * scale).x;
+    int buttonTextWidth = (int)MeasureTextStrongSpaced(buttonText, buttonFontSize, 1.0f * scale).x;
     Vector2 mousePosition = GetMousePosition();
     bool isButtonHovered = CheckCollisionPointRec(mousePosition, button);
-    Color buttonColor = isButtonHovered ? LIME : GREEN;
+    Color dangerColor = (Color){ 230, 70, 90, 255 };
+    Color buttonColor = isButtonHovered ? (Color){ 255, 110, 125, 255 } : dangerColor;
 
-    DrawRectangle(0, 0, screenWidth, screenHeight, Fade(BLACK, 0.55f));
-    DrawRectangleRounded(panel, 0.12f, 12, (Color){ 24, 24, 24, 235 });
-    DrawRectangleRoundedLinesEx(panel, 0.12f, 12, 3.0f, GREEN);
-    DrawTextStrong(title, (int)(panel.x + (panel.width - titleWidth) * 0.5f), (int)panel.y + 44, titleFontSize, RAYWHITE, BLACK);
+    /* Darker, blurred-glass backdrop (instead of the flat grey wash) keeps
+     * the maze faintly visible behind the panel while pulling focus to the
+     * "system compromised" message. */
+    DrawRectangle(0, 0, screenWidth, screenHeight, Fade(BLACK, 0.72f));
+
+    /* Soft red glow radiating from the panel, echoing a "critical alert"
+     * rather than a plain grey error box. */
+    DrawRectangleRounded((Rectangle){ panel.x - 10.0f * scale, panel.y - 10.0f * scale, panel.width + 20.0f * scale, panel.height + 20.0f * scale }, 0.14f, 12, Fade(dangerColor, 0.10f));
+    DrawRectangleRounded((Rectangle){ panel.x - 4.0f * scale, panel.y - 4.0f * scale, panel.width + 8.0f * scale, panel.height + 8.0f * scale }, 0.13f, 12, Fade(dangerColor, 0.16f));
+    DrawRectangleRounded(panel, 0.12f, 12, (Color){ 10, 8, 20, 250 });
+    DrawRectangleRoundedLinesEx(panel, 0.12f, 12, 2.0f * scale, Fade(dangerColor, 0.9f));
+
+    /* A thin horizontal "system fault" divider under the title, and a
+     * small warning glyph above it, to sell the alert without needing an
+     * image asset. */
+    Vector2 warnCenter = { panel.x + panel.width * 0.5f, panel.y + 30.0f * scale };
+    DrawTriangleLines(
+        (Vector2){ warnCenter.x, warnCenter.y - 12.0f * scale },
+        (Vector2){ warnCenter.x - 12.0f * scale, warnCenter.y + 9.0f * scale },
+        (Vector2){ warnCenter.x + 12.0f * scale, warnCenter.y + 9.0f * scale },
+        dangerColor
+    );
+    DrawCircleV((Vector2){ warnCenter.x, warnCenter.y + 4.0f * scale }, fmaxf(1.0f, 1.4f * scale), dangerColor);
+    DrawRectangleRec((Rectangle){ warnCenter.x - 1.0f * scale, warnCenter.y - 6.0f * scale, 2.0f * scale, 7.0f * scale }, dangerColor);
+
+    DrawTextStrong(title, (int)(panel.x + (panel.width - titleWidth) * 0.5f), (int)(panel.y + 58.0f * scale), titleFontSize, RAYWHITE, dangerColor);
+    DrawLineEx((Vector2){ panel.x + 40.0f * scale, panel.y + 108.0f * scale }, (Vector2){ panel.x + panel.width - 40.0f * scale, panel.y + 108.0f * scale }, 1.0f * scale, Fade(dangerColor, 0.4f));
+
+    DrawRectangleRounded(button, 0.3f, 12, Fade(BLACK, 0.3f));
+    DrawRectangleRounded((Rectangle){ button.x - 2.0f * scale, button.y - 2.0f * scale, button.width + 4.0f * scale, button.height + 4.0f * scale }, 0.32f, 12, Fade(buttonColor, isButtonHovered ? 0.4f : 0.22f));
     DrawRectangleRounded(button, 0.3f, 12, buttonColor);
-    DrawTextStrong(buttonText, (int)(button.x + (button.width - buttonTextWidth) * 0.5f), (int)(button.y + 14.0f), buttonFontSize, BLACK, Fade(WHITE, 0.25f));
+    DrawTextStrong(buttonText, (int)(button.x + (button.width - buttonTextWidth) * 0.5f), (int)(button.y + 16.0f * scale), buttonFontSize, RAYWHITE, Fade(BLACK, 0.35f));
 
     if (isButtonHovered && IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
     {
@@ -2351,24 +3959,42 @@ void DrawPlayer(void)
     float scale = GetMazeScale();
     Vector2 offset = GetMazeOffset(scale);
     Vector2 center = WorldToScreenPosition(player.position, scale, offset);
-    float drawRadius = fmaxf(player.radius * scale, 6.0f);
+    float drawRadius = fmaxf(player.radius * scale * 1.1f, 8.0f);
+    Color playerCore = (Color){ 255, 185, 55, 255 };
+    Color playerEdge = (Color){ 255, 235, 200, 255 };
+    Color playerOuter = (Color){ 40, 18, 0, 255 };
+    Color playerGlow = (Color){ 80, 220, 255, 255 };
 
     Vector2 tip = {
-        center.x + (cosf(player.facingAngle) * drawRadius * 1.15f),
-        center.y + (sinf(player.facingAngle) * drawRadius * 1.15f)
+        center.x + (cosf(player.facingAngle) * drawRadius * 1.2f),
+        center.y + (sinf(player.facingAngle) * drawRadius * 1.2f)
     };
     
     Vector2 left = {
-        center.x + (cosf(player.facingAngle + 2.45f) * drawRadius * 0.95f),
-        center.y + (sinf(player.facingAngle + 2.45f) * drawRadius * 0.95f)
+        center.x + (cosf(player.facingAngle + 2.45f) * drawRadius * 0.98f),
+        center.y + (sinf(player.facingAngle + 2.45f) * drawRadius * 0.98f)
     };
     Vector2 right = {
-        center.x + (cosf(player.facingAngle - 2.45f) * drawRadius * 0.95f),
-        center.y + (sinf(player.facingAngle - 2.45f) * drawRadius * 0.95f)
+        center.x + (cosf(player.facingAngle - 2.45f) * drawRadius * 0.98f),
+        center.y + (sinf(player.facingAngle - 2.45f) * drawRadius * 0.98f)
     };
+    Vector2 shadowTip = { tip.x + 2.0f * scale, tip.y + 2.0f * scale };
+    Vector2 shadowLeft = { left.x + 2.0f * scale, left.y + 2.0f * scale };
+    Vector2 shadowRight = { right.x + 2.0f * scale, right.y + 2.0f * scale };
 
-    DrawTriangle(tip, right, left, GOLD);
-    DrawTriangleLines(tip, right, left, (Color){ 255, 250, 220, 255 });
+    if (playerStartAuraVisible)
+    {
+        float blink = (sinf((float)GetTime() * 9.0f) + 1.0f) * 0.5f;
+        DrawCircleV(center, drawRadius * (3.0f + blink * 0.6f), Fade(playerGlow, 0.18f + blink * 0.14f));
+        DrawCircleLines((int)center.x, (int)center.y, drawRadius * (2.15f + blink * 0.35f), Fade(playerGlow, 0.75f + blink * 0.25f));
+    }
+
+    DrawTriangle(shadowTip, shadowRight, shadowLeft, Fade(BLACK, 0.55f));
+    DrawTriangleLines(tip, right, left, playerOuter);
+    DrawTriangleLines(tip, right, left, playerOuter);
+    DrawTriangle(tip, right, left, playerCore);
+    DrawTriangleLines(tip, right, left, playerEdge);
+    DrawCircleV(center, fmaxf(drawRadius * 0.18f, 2.0f), playerEdge);
 }
 
 void DrawEnemies(void)
@@ -2468,7 +4094,15 @@ void DrawBullets(void)
 
         Vector2 center = WorldToScreenPosition(bullets[i].position, scale, offset);
         float drawRadius = fmaxf(bullets[i].radius * scale, 3.0f);
-        Color bulletColor = bullets[i].fromPlayer ? ORANGE : SKYBLUE;
+        Color bulletColor = bullets[i].fromPlayer ? (Color){ 255, 190, 65, 255 } : SKYBLUE;
+
+        if (bullets[i].fromBoss)
+        {
+            drawRadius = fmaxf(bullets[i].radius * scale * 1.55f, 5.0f);
+            bulletColor = SKYBLUE;
+            DrawCircleV(center, drawRadius * 1.8f, Fade(SKYBLUE, 0.22f));
+        }
+
         DrawCircleV(center, drawRadius, bulletColor);
     }
 }
@@ -2494,21 +4128,148 @@ void DrawVisibilityEffects(void)
     }
 }
 
-Rectangle GetRoundPanelRect(const char *title, const char *body)
+void WrapTextToWidth(const char *source, int fontSize, float spacing, float maxWidth, char *destination, int destinationSize)
+{
+    int sourceLength = (int)strlen(source);
+    int sourceIndex = 0;
+    int destinationIndex = 0;
+
+    destination[0] = '\0';
+
+    while (sourceIndex < sourceLength && destinationIndex < destinationSize - 1)
+    {
+        char line[512] = { 0 };
+        char candidate[512] = { 0 };
+        int lineLength = 0;
+
+        while (sourceIndex < sourceLength && source[sourceIndex] != '\n')
+        {
+            char word[160] = { 0 };
+            int wordLength = 0;
+
+            while (sourceIndex < sourceLength && source[sourceIndex] == ' ')
+            {
+                sourceIndex++;
+            }
+
+            int wordStart = sourceIndex;
+            while (sourceIndex < sourceLength && source[sourceIndex] != ' ' && source[sourceIndex] != '\n' && wordLength < 159)
+            {
+                word[wordLength++] = source[sourceIndex++];
+            }
+            word[wordLength] = '\0';
+
+            if (wordLength == 0)
+            {
+                break;
+            }
+
+            if (lineLength == 0)
+            {
+                snprintf(candidate, sizeof(candidate), "%s", word);
+            }
+            else
+            {
+                snprintf(candidate, sizeof(candidate), "%s %s", line, word);
+            }
+
+            if (MeasureTextStrongSpaced(candidate, fontSize, spacing).x > maxWidth)
+            {
+                sourceIndex = wordStart;
+                break;
+            }
+
+            snprintf(line, sizeof(line), "%s", candidate);
+            lineLength = (int)strlen(line);
+        }
+
+        if (lineLength == 0 && sourceIndex < sourceLength && source[sourceIndex] != '\n')
+        {
+            int start = sourceIndex;
+            int lastFit = sourceIndex;
+
+            while (sourceIndex < sourceLength && source[sourceIndex] != '\n' && source[sourceIndex] != ' ')
+            {
+                int codepointByteCount = 0;
+                GetCodepointNext(&source[sourceIndex], &codepointByteCount);
+                if (codepointByteCount <= 0)
+                {
+                    codepointByteCount = 1;
+                }
+
+                int nextIndex = sourceIndex + codepointByteCount;
+                int candidateLength = nextIndex - start;
+                if (candidateLength > 511)
+                {
+                    break;
+                }
+
+                char candidate[512] = { 0 };
+                memcpy(candidate, &source[start], candidateLength);
+                candidate[candidateLength] = '\0';
+
+                if (lastFit > start && MeasureTextStrongSpaced(candidate, fontSize, spacing).x > maxWidth)
+                {
+                    break;
+                }
+
+                sourceIndex = nextIndex;
+                lastFit = sourceIndex;
+            }
+
+            if (lastFit > start)
+            {
+                sourceIndex = lastFit;
+            }
+
+            lineLength = sourceIndex - start;
+            if (lineLength > 511) lineLength = 511;
+            memcpy(line, &source[start], lineLength);
+            line[lineLength] = '\0';
+        }
+
+        int written = snprintf(&destination[destinationIndex], (size_t)(destinationSize - destinationIndex), "%s%s",
+                               (destinationIndex > 0) ? "\n" : "", line);
+        if (written < 0)
+        {
+            break;
+        }
+        destinationIndex += written;
+
+        if (sourceIndex < sourceLength && source[sourceIndex] == '\n')
+        {
+            sourceIndex++;
+        }
+    }
+}
+
+Rectangle GetRoundPanelRect(const char *title, const char *body, const char *footer)
 {
     (void)title;
-    const float bodyFontSize = 22.0f;
-    const float bodySpacing = 2.4f;
-    const float bodyTop = 96.0f;
-    const float footerGap = 40.0f;
-    const float bottomPadding = 30.0f;
-    Vector2 bodySize = MeasureTextStrongSpaced(body, (int)bodyFontSize, bodySpacing);
-    float panelWidth = fmaxf(600.0f, bodySize.x + 56.0f);
-    float panelHeight = fmaxf(270.0f, bodyTop + bodySize.y + footerGap + bottomPadding);
+    float scale = GetUIScale();
+    int bodyFontSize = ScaleFontSize((currentLanguage == LANGUAGE_KO) ? 20.0f : 23.0f);
+    int footerFontSize = ScaleFontSize(21.0f);
+    float bodySpacing = ((currentLanguage == LANGUAGE_KO) ? 0.55f : 1.05f) * scale;
+    float footerSpacing = 0.75f * scale;
+    float maxPanelWidth = fminf((float)GetScreenWidth() - (32.0f * scale), 1080.0f * scale);
+    float minPanelWidth = fminf(760.0f * scale, maxPanelWidth);
+    float maxBodyWidth = maxPanelWidth - (56.0f * scale);
+    char wrappedBody[2048];
+    char wrappedFooter[512];
+    WrapTextToWidth(body, bodyFontSize, bodySpacing, maxBodyWidth, wrappedBody, sizeof(wrappedBody));
+    WrapTextToWidth(footer, footerFontSize, footerSpacing, maxBodyWidth, wrappedFooter, sizeof(wrappedFooter));
+    Vector2 bodySize = MeasureTextStrongSpaced(wrappedBody, bodyFontSize, bodySpacing);
+    Vector2 footerSize = MeasureTextStrongSpaced(wrappedFooter, footerFontSize, footerSpacing);
+    float bodyTop = 104.0f * scale;
+    float footerGap = 34.0f * scale;
+    float bottomPadding = 30.0f * scale;
+    float contentWidth = fmaxf(bodySize.x, footerSize.x);
+    float panelWidth = fminf(maxPanelWidth, fmaxf(minPanelWidth, contentWidth + (56.0f * scale)));
+    float panelHeight = fmaxf(320.0f * scale, bodyTop + bodySize.y + footerGap + footerSize.y + bottomPadding);
 
     return (Rectangle){
         (float)(GetScreenWidth() / 2) - panelWidth * 0.5f,
-        (float)(GetScreenHeight() / 2) - panelHeight * 0.5f,
+        fmaxf(70.0f * scale, (float)(GetScreenHeight() / 2) - panelHeight * 0.5f),
         panelWidth,
         panelHeight
     };
@@ -2516,12 +4277,98 @@ Rectangle GetRoundPanelRect(const char *title, const char *body)
 
 Rectangle GetTutorialSkipButtonRect(Rectangle panel)
 {
+    float scale = GetUIScale();
+    int skipFontSize = ScaleFontSize(17.0f);
+    int continueFontSize = ScaleFontSize(18.0f);
+    float skipWidth = fmaxf(290.0f * scale, MeasureTextStrongSpaced(T(TEXT_SKIP_TUTORIAL), skipFontSize, 1.0f * scale).x + (48.0f * scale));
+    float continueWidth = fmaxf(260.0f * scale, MeasureTextStrongSpaced(T(TEXT_CONTINUE_TUTORIAL), continueFontSize, 1.0f * scale).x + (82.0f * scale));
+    float gap = 18.0f * scale;
+    float totalWidth = skipWidth + gap + continueWidth;
+
     return (Rectangle){
-        panel.x + (panel.width - 200.0f) * 0.5f,
-        panel.y + panel.height + 16.0f,
-        200.0f,
-        38.0f
+        panel.x + (panel.width - totalWidth) * 0.5f,
+        panel.y + panel.height + (16.0f * scale),
+        skipWidth,
+        50.0f * scale
     };
+}
+
+Rectangle GetContinueButtonRect(Rectangle panel)
+{
+    float scale = GetUIScale();
+    int skipFontSize = ScaleFontSize(17.0f);
+    int continueFontSize = ScaleFontSize(18.0f);
+    float continueWidth = fmaxf(260.0f * scale, MeasureTextStrongSpaced(T(TEXT_CONTINUE_TUTORIAL), continueFontSize, 1.0f * scale).x + (82.0f * scale));
+
+    if (!inTutorialSequence)
+    {
+        return (Rectangle){
+            panel.x + (panel.width - continueWidth) * 0.5f,
+            panel.y + panel.height + (16.0f * scale),
+            continueWidth,
+            50.0f * scale
+        };
+    }
+
+    float skipWidth = fmaxf(290.0f * scale, MeasureTextStrongSpaced(T(TEXT_SKIP_TUTORIAL), skipFontSize, 1.0f * scale).x + (48.0f * scale));
+    float gap = 18.0f * scale;
+    float totalWidth = skipWidth + gap + continueWidth;
+
+    return (Rectangle){
+        panel.x + (panel.width - totalWidth) * 0.5f + skipWidth + gap,
+        panel.y + panel.height + (16.0f * scale),
+        continueWidth,
+        50.0f * scale
+    };
+}
+
+void DrawButtonArrow(Rectangle button, Color color)
+{
+    float scale = GetUIScale();
+    Vector2 start = { button.x + button.width - (38.0f * scale), button.y + button.height * 0.5f };
+    Vector2 end = { button.x + button.width - (18.0f * scale), button.y + button.height * 0.5f };
+    Vector2 top = { end.x - (7.0f * scale), end.y - (7.0f * scale) };
+    Vector2 bottom = { end.x - (7.0f * scale), end.y + (7.0f * scale) };
+
+    DrawLineEx(start, end, 3.0f * scale, color);
+    DrawTriangle(end, top, bottom, color);
+}
+
+void DrawContinueButton(Rectangle continueButton)
+{
+    float scale = GetUIScale();
+    Vector2 mousePosition = GetMousePosition();
+    bool continueHovered = CheckCollisionPointRec(mousePosition, continueButton);
+    Color continueFill = continueHovered ? (Color){ 100, 235, 255, 255 } : (Color){ 24, 74, 170, 255 };
+    int continueFontSize = FitFontSizeToWidth(T(TEXT_CONTINUE_TUTORIAL), ScaleFontSize(18.0f), ScaleFontSize(10.0f), 0.7f * scale, continueButton.width - 62.0f * scale);
+
+    DrawRectangleRounded(continueButton, 0.28f, 10, continueFill);
+    DrawRectangleRoundedLinesEx(continueButton, 0.28f, 10, 2.0f, HUD_BORDER_COLOR);
+    DrawTextStrongSpaced(T(TEXT_CONTINUE_TUTORIAL), (int)(continueButton.x + 20.0f * scale), (int)(continueButton.y + (continueButton.height - continueFontSize) * 0.45f), continueFontSize, 0.7f * scale, BLACK, Fade(WHITE, 0.25f));
+    DrawButtonArrow(continueButton, BLACK);
+}
+
+void DrawPanelButtons(Rectangle panel)
+{
+    Rectangle continueButton = GetContinueButtonRect(panel);
+
+    if (!inTutorialSequence)
+    {
+        DrawContinueButton(continueButton);
+        return;
+    }
+
+    Rectangle skipButton = GetTutorialSkipButtonRect(panel);
+    float scale = GetUIScale();
+    Vector2 mousePosition = GetMousePosition();
+    bool skipHovered = CheckCollisionPointRec(mousePosition, skipButton);
+    Color skipFill = skipHovered ? (Color){ 55, 72, 155, 255 } : (Color){ 17, 30, 78, 255 };
+    int skipFontSize = FitFontSizeToWidth(T(TEXT_SKIP_TUTORIAL), ScaleFontSize(17.0f), ScaleFontSize(10.0f), 0.7f * scale, skipButton.width - 40.0f * scale);
+
+    DrawRectangleRounded(skipButton, 0.28f, 10, skipFill);
+    DrawRectangleRoundedLinesEx(skipButton, 0.28f, 10, 2.0f, HUD_BORDER_COLOR);
+    DrawTextStrongSpaced(T(TEXT_SKIP_TUTORIAL), (int)(skipButton.x + 20.0f * scale), (int)(skipButton.y + (skipButton.height - skipFontSize) * 0.45f), skipFontSize, 0.7f * scale, RAYWHITE, BLACK);
+    DrawContinueButton(continueButton);
 }
 
 void DrawRoundPanel(const char *title, const char *body, const char *footer)
@@ -2529,41 +4376,79 @@ void DrawRoundPanel(const char *title, const char *body, const char *footer)
     /* Body text uses extra letter spacing for legibility, and the panel
      * height grows to fit however many lines the explanation needs, so
      * longer tutorial text never gets clipped or cramped. */
-    const float bodyFontSize = 22.0f;
-    const float bodySpacing = 2.4f;
-    const float bodyTop = 96.0f;
-    const float footerGap = 40.0f;
-    const float bottomPadding = 30.0f;
+    float scale = GetUIScale();
+    int bodyFontSize = ScaleFontSize((currentLanguage == LANGUAGE_KO) ? 20.0f : 23.0f);
+    float bodySpacing = ((currentLanguage == LANGUAGE_KO) ? 0.55f : 1.05f) * scale;
+    float footerSpacing = 0.75f * scale;
+    float bodyTop = 104.0f * scale;
+    float footerGap = 34.0f * scale;
+    float maxPanelWidth = fminf((float)GetScreenWidth() - (32.0f * scale), 1080.0f * scale);
+    float maxBodyWidth = maxPanelWidth - (56.0f * scale);
+    char wrappedBody[2048];
+    char wrappedFooter[512];
+    WrapTextToWidth(body, bodyFontSize, bodySpacing, maxBodyWidth, wrappedBody, sizeof(wrappedBody));
+    WrapTextToWidth(footer, ScaleFontSize(21.0f), footerSpacing, maxBodyWidth, wrappedFooter, sizeof(wrappedFooter));
 
     int screenWidth = GetScreenWidth();
     int screenHeight = GetScreenHeight();
-    int titleWidth = (int)MeasureTextStrongSpaced(title, 30, 1.0f).x;
-    Vector2 bodySize = MeasureTextStrongSpaced(body, (int)bodyFontSize, bodySpacing);
-    Rectangle panel = GetRoundPanelRect(title, body);
+    int titleFontSize = ScaleFontSize(34.0f);
+    int footerFontSize = ScaleFontSize(21.0f);
+    Vector2 bodySize = MeasureTextStrongSpaced(wrappedBody, bodyFontSize, bodySpacing);
+    Rectangle panel = GetRoundPanelRect(title, body, footer);
+    titleFontSize = FitFontSizeToWidth(title, titleFontSize, ScaleFontSize(18.0f), 0.8f * scale, panel.width - 56.0f * scale);
+    int titleWidth = (int)MeasureTextStrongSpaced(title, titleFontSize, 0.8f * scale).x;
 
     DrawRectangle(0, 0, screenWidth, screenHeight, Fade(BLACK, 0.78f));
-    DrawRectangleRounded(panel, 0.08f, 12, (Color){ 18, 18, 18, 245 });
-    DrawRectangleRoundedLinesEx(panel, 0.08f, 12, 3.0f, GREEN);
-    DrawTextStrong(title, (int)(panel.x + (panel.width - titleWidth) * 0.5f), (int)panel.y + 24, 30, GREEN, BLACK);
-    DrawTextStrongSpaced(body, (int)panel.x + 28, (int)(panel.y + bodyTop), (int)bodyFontSize, bodySpacing, RAYWHITE, BLACK);
-    DrawTextStrong(footer, (int)panel.x + 28, (int)(panel.y + bodyTop + bodySize.y + footerGap - 20.0f), 20, LIGHTGRAY, BLACK);
+    DrawRectangleRounded(panel, 0.08f, 12, (Color){ 6, 12, 36, 245 });
+    DrawRectangleRoundedLinesEx(panel, 0.08f, 12, 3.0f * scale, HUD_BORDER_COLOR);
+    DrawTextStrongSpaced(title, (int)(panel.x + (panel.width - titleWidth) * 0.5f), (int)(panel.y + 26.0f * scale), titleFontSize, 0.8f * scale, HUD_BORDER_COLOR, BLACK);
+    DrawTextStrongSpaced(wrappedBody, (int)(panel.x + 28.0f * scale), (int)(panel.y + bodyTop), bodyFontSize, bodySpacing, RAYWHITE, BLACK);
+    DrawTextStrongSpaced(wrappedFooter, (int)(panel.x + 28.0f * scale), (int)(panel.y + bodyTop + bodySize.y + footerGap), footerFontSize, footerSpacing, LIGHTGRAY, BLACK);
 
-    if (inTutorialSequence)
-    {
-        Rectangle skipButton = GetTutorialSkipButtonRect(panel);
-        Vector2 mousePosition = GetMousePosition();
-        bool hovered = CheckCollisionPointRec(mousePosition, skipButton);
-        Color fillColor = hovered ? (Color){ 35, 120, 60, 255 } : (Color){ 22, 72, 40, 255 };
-
-        DrawRectangleRounded(skipButton, 0.28f, 10, fillColor);
-        DrawRectangleRoundedLinesEx(skipButton, 0.28f, 10, 2.0f, HUD_BORDER_COLOR);
-        DrawTextStrong(T(TEXT_SKIP_TUTORIAL), (int)skipButton.x + 20, (int)skipButton.y + 9, 20, RAYWHITE, BLACK);
-    }
+    DrawPanelButtons(panel);
 }
 
-void CycleLanguage(void)
+bool HandlePanelButtons(void)
 {
-    currentLanguage = (Language)(((int)currentLanguage + 1) % (int)LANGUAGE_COUNT);
+    if ((gamePhase != PHASE_INTRO && gamePhase != PHASE_INFO) || !IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+    {
+        return false;
+    }
+
+    const char *body = (gamePhase == PHASE_INTRO) ? GetIntroBody() : GetRoundInfoBody();
+    const char *footer = (gamePhase == PHASE_INTRO) ? T(TEXT_INTRO_FOOTER) : T(TEXT_ROUND_FOOTER);
+    Rectangle panel = GetRoundPanelRect((gamePhase == PHASE_INTRO) ? GetIntroTitle() : GetRoundInfoTitle(), body, footer);
+    Rectangle skipButton = GetTutorialSkipButtonRect(panel);
+    Rectangle continueButton = GetContinueButtonRect(panel);
+    Vector2 mousePosition = GetMousePosition();
+
+    if (inTutorialSequence && CheckCollisionPointRec(mousePosition, skipButton))
+    {
+        inTutorialSequence = false;
+        tutorialRound = 1;
+        officialRound = 1;
+        bestOfficialRound = 1;
+        StartCurrentStage();
+        return true;
+    }
+
+    if (CheckCollisionPointRec(mousePosition, continueButton))
+    {
+        if (gamePhase == PHASE_INTRO)
+        {
+            tutorialRound = 1;
+            inTutorialSequence = true;
+            gamePhase = PHASE_INFO;
+        }
+        else
+        {
+            gamePhase = PHASE_PLAYING;
+        }
+
+        return true;
+    }
+
+    return false;
 }
 
 int main(int argc, char *argv[])
@@ -2582,21 +4467,12 @@ int main(int argc, char *argv[])
     {
         UpdateBuildMetrics(argv[0]);
         UpdateGameAudio();
-        bool languagePressed = IsKeyPressed(KEY_L);
-
-        if (languagePressed)
-        {
-            CycleLanguage();
-        }
+        HandleLanguageButtons();
+        HandlePanelButtons();
 
         if (gamePhase == PHASE_INTRO)
         {
-            if (!languagePressed && (GetKeyPressed() != 0 || IsMouseButtonPressed(MOUSE_BUTTON_LEFT)))
-            {
-                tutorialRound = 1;
-                inTutorialSequence = true;
-                gamePhase = PHASE_INFO;
-            }
+            /* Intro advances only through the tutorial buttons. */
         }
         else if (gamePhase == PHASE_INFO)
         {
@@ -2605,27 +4481,6 @@ int main(int argc, char *argv[])
                 SetupRound();
             }
 
-            if (inTutorialSequence && IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
-            {
-                const char *body = GetRoundInfoBody();
-                Rectangle panel = GetRoundPanelRect(GetRoundInfoTitle(), body);
-                Rectangle skipButton = GetTutorialSkipButtonRect(panel);
-
-                if (CheckCollisionPointRec(GetMousePosition(), skipButton))
-                {
-                    inTutorialSequence = false;
-                    tutorialRound = 1;
-                    officialRound = 1;
-                    bestOfficialRound = 1;
-                    StartCurrentStage();
-                    continue;
-                }
-            }
-
-            if (!languagePressed && (GetKeyPressed() != 0 || IsMouseButtonPressed(MOUSE_BUTTON_LEFT)))
-            {
-                gamePhase = PHASE_PLAYING;
-            }
         }
         else if (gamePhase == PHASE_PLAYING)
         {
@@ -2673,7 +4528,8 @@ int main(int argc, char *argv[])
         }
 
         BeginDrawing();
-        ClearBackground(BLACK);
+        DrawDashboardBackground();
+        DrawDashboardHeader();
 
         if (gamePhase == PHASE_PLAYING)
         {
@@ -2698,6 +4554,8 @@ int main(int argc, char *argv[])
         {
             DrawRoundPanel(GetRoundInfoTitle(), GetRoundInfoBody(), T(TEXT_ROUND_FOOTER));
         }
+
+        DrawLanguageButtons();
 
         EndDrawing();
     }
