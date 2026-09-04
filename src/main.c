@@ -48,7 +48,6 @@
 #define PLAYER_MAX_HEALTH 100
 #define PLAYER_MAGAZINE_SIZE 15
 #define PLAYER_MAX_AMMO 100
-#define PLAYER_MAX_AMMO_CAP 300
 #define SHOP_AMMO_GAIN 50
 #define PLAYER_RELOAD_TIME 1.5f
 #define BLUE_BULLET_DAMAGE 15
@@ -57,6 +56,13 @@
 #define PLAYER_START_HEALTH 50
 #define SHOP_START_COINS 0
 #define SHOP_ROUND_REWARD 50
+#define SAVE_FILE_NAME "bytemaze_save.dat"
+#define SAVE_VERSION 1
+#define EVOLUTION_BASE_XP 100
+#define EVOLUTION_ROUND_XP 60
+#define EVOLUTION_PICKUP_XP 5
+#define EVOLUTION_HEALTH_GAIN 5
+#define EVOLUTION_AMMO_GAIN 25
 #define SHOP_STANDARD_PRICE 100
 #define SHOP_LIGHTNING_PRICE 400
 #define SHOP_HEALTH_GAIN 5
@@ -112,6 +118,8 @@ int playerTotalAmmo = PLAYER_MAX_AMMO;
 float playerReloadTimer = 0.0f;
 float playerDamageCooldown = 0.0f;
 int playerCoins = SHOP_START_COINS;
+int playerLevel = 1;
+int playerXp = 0;
 int lightningCharges = 0;
 float lightningAutoTimer = 0.0f;
 float lightningRevealTimer = 0.0f;
@@ -123,6 +131,7 @@ int roundPickupsCollected = 0;
 int roundShotsFired = 0;
 bool roundTookDamage = false;
 int pendingRoundBonus = 0;
+int pendingEvolutionXp = 0;
 
 extern bool inTutorialSequence;
 extern int officialRound;
@@ -721,6 +730,9 @@ void InitUIFont(void);
 void ShutdownUIFont(void);
 void DrawButtonArrow(Rectangle button, Color color);
 Vector2 MeasureTextStrongSpaced(const char *text, int fontSize, float spacing);
+void SaveProgress(void);
+void SaveProgressForRound(int savedRound, int savedBestRound);
+void LoadProgress(void);
 
 float GetUIScale(void)
 {
@@ -742,6 +754,147 @@ int ScaleFontSize(float fontSize)
 float GetStableFrameTime(void)
 {
     return fminf(GetFrameTime(), MAX_SIMULATION_FRAME_TIME);
+}
+
+int GetEvolutionXpToNextLevel(void)
+{
+    return EVOLUTION_BASE_XP * playerLevel;
+}
+
+void ClampProgressState(void)
+{
+    if (officialRound < 1) officialRound = 1;
+    if (bestOfficialRound < officialRound) bestOfficialRound = officialRound;
+    if (playerCoins < 0) playerCoins = 0;
+    if (playerLevel < 1) playerLevel = 1;
+    if (playerXp < 0) playerXp = 0;
+    if (playerMaxHealth < PLAYER_START_HEALTH) playerMaxHealth = PLAYER_START_HEALTH;
+    if (playerMaxHealth > PLAYER_MAX_HEALTH) playerMaxHealth = PLAYER_MAX_HEALTH;
+    if (playerHealth < 1) playerHealth = playerMaxHealth;
+    if (playerHealth > playerMaxHealth) playerHealth = playerMaxHealth;
+    if (playerMaxAmmo < PLAYER_MAX_AMMO) playerMaxAmmo = PLAYER_MAX_AMMO;
+    if (playerTotalAmmo < 0) playerTotalAmmo = 0;
+    if (playerAmmo < 0) playerAmmo = 0;
+    if (playerAmmo > PLAYER_MAGAZINE_SIZE) playerAmmo = PLAYER_MAGAZINE_SIZE;
+    if (playerAmmo > playerTotalAmmo) playerAmmo = playerTotalAmmo;
+    if (flashlightBattery < 0.0f) flashlightBattery = 0.0f;
+    if (flashlightBattery > FLASHLIGHT_MAX_BATTERY) flashlightBattery = FLASHLIGHT_MAX_BATTERY;
+    if (lightningCharges < 0) lightningCharges = 0;
+}
+
+void AddEvolutionXp(int amount)
+{
+    if (amount <= 0 || inTutorialSequence)
+    {
+        return;
+    }
+
+    playerXp += amount;
+
+    while (playerXp >= GetEvolutionXpToNextLevel())
+    {
+        playerXp -= GetEvolutionXpToNextLevel();
+        playerLevel++;
+
+        if (playerMaxHealth < PLAYER_MAX_HEALTH)
+        {
+            playerMaxHealth += EVOLUTION_HEALTH_GAIN;
+            if (playerMaxHealth > PLAYER_MAX_HEALTH)
+            {
+                playerMaxHealth = PLAYER_MAX_HEALTH;
+            }
+            playerHealth = playerMaxHealth;
+        }
+
+        playerMaxAmmo += EVOLUTION_AMMO_GAIN;
+        playerTotalAmmo += EVOLUTION_AMMO_GAIN;
+    }
+}
+
+void SaveProgressForRound(int savedRound, int savedBestRound)
+{
+    FILE *file = fopen(SAVE_FILE_NAME, "w");
+    if (file == NULL)
+    {
+        return;
+    }
+
+    fprintf(file, "%d %d %d %d %d %d %d %d %d %.2f %d\n",
+            SAVE_VERSION,
+            savedRound,
+            savedBestRound,
+            playerCoins,
+            playerLevel,
+            playerXp,
+            playerMaxHealth,
+            playerMaxAmmo,
+            playerTotalAmmo,
+            flashlightBattery,
+            lightningCharges);
+    fclose(file);
+}
+
+void SaveProgress(void)
+{
+    SaveProgressForRound(officialRound, bestOfficialRound);
+}
+
+void LoadProgress(void)
+{
+    int version = 0;
+    int savedRound = 1;
+    int savedBestRound = 1;
+    int savedCoins = SHOP_START_COINS;
+    int savedLevel = 1;
+    int savedXp = 0;
+    int savedMaxHealth = PLAYER_START_HEALTH;
+    int savedMaxAmmo = PLAYER_MAX_AMMO;
+    int savedTotalAmmo = PLAYER_MAX_AMMO;
+    float savedBattery = FLASHLIGHT_MAX_BATTERY;
+    int savedLightning = 0;
+    FILE *file = fopen(SAVE_FILE_NAME, "r");
+
+    if (file == NULL)
+    {
+        return;
+    }
+
+    int readCount = fscanf(file, "%d %d %d %d %d %d %d %d %d %f %d",
+                           &version,
+                           &savedRound,
+                           &savedBestRound,
+                           &savedCoins,
+                           &savedLevel,
+                           &savedXp,
+                           &savedMaxHealth,
+                           &savedMaxAmmo,
+                           &savedTotalAmmo,
+                           &savedBattery,
+                           &savedLightning);
+    fclose(file);
+
+    if (readCount != 11 || version != SAVE_VERSION)
+    {
+        return;
+    }
+
+    inTutorialSequence = false;
+    tutorialRound = 1;
+    officialRound = savedRound;
+    bestOfficialRound = savedBestRound;
+    playerCoins = savedCoins;
+    playerLevel = savedLevel;
+    playerXp = savedXp;
+    playerMaxHealth = savedMaxHealth;
+    playerHealth = playerMaxHealth;
+    playerMaxAmmo = savedMaxAmmo;
+    playerTotalAmmo = savedTotalAmmo;
+    playerAmmo = (playerTotalAmmo < PLAYER_MAGAZINE_SIZE) ? playerTotalAmmo : PLAYER_MAGAZINE_SIZE;
+    flashlightBattery = savedBattery;
+    lightningCharges = savedLightning;
+    ClampProgressState();
+    roundNeedsSetup = true;
+    gamePhase = PHASE_SHOP;
 }
 
 const char *uiText[LANGUAGE_COUNT][TEXT_COUNT] = {
@@ -1913,6 +2066,7 @@ void DrawMazeGrid(void)
                 ((float)x + 0.5f) * TILE_SIZE,
                 ((float)y + 0.5f) * TILE_SIZE
             };
+            bool cellVisible = IsWorldPositionVisible(cellCenter);
 
             if (grid[y][x] == CELL_WALL)
             {
@@ -1935,24 +2089,31 @@ void DrawMazeGrid(void)
                 cellColor = MAZE_PATH_COLOR;
             }
 
-            if (!IsWorldPositionVisible(cellCenter))
+            if (!cellVisible)
             {
                 cellColor = (Color){ 6, 6, 6, 255 };
             }
 
             Vector2 position = { layout.offset.x + ((float)x * drawTileWidth), layout.offset.y + ((float)y * drawTileHeight) };
             Vector2 size = { drawTileWidth, drawTileHeight };
+            bool drawHiddenKeyPulse = grid[y][x] == CELL_KEY && currentRoundConfig.flashlightEnabled && !cellVisible;
+            bool drawHiddenExtraPulse = currentRoundConfig.flashlightEnabled && !cellVisible &&
+                                        (grid[y][x] == CELL_AMMO_PICKUP ||
+                                         grid[y][x] == CELL_BATTERY_PICKUP ||
+                                         grid[y][x] == CELL_HEALTH_PICKUP);
+            float keyCycle = fmodf((float)GetTime(), 5.0f);
+            float keyPulse = drawHiddenKeyPulse && keyCycle < 0.9f ? sinf((keyCycle / 0.9f) * 3.1415926f) : 0.0f;
             DrawRectangleV(position, size, cellColor);
 
-            if (grid[y][x] == CELL_PATH && IsWorldPositionVisible(cellCenter))
+            if (grid[y][x] == CELL_PATH && cellVisible)
             {
                 DrawRectangleLinesEx((Rectangle){ position.x, position.y, size.x, size.y }, fmaxf(1.0f, layout.drawScale), Fade(LIGHTGRAY, 0.08f));
             }
-            else if (grid[y][x] == CELL_EXIT && IsWorldPositionVisible(cellCenter))
+            else if (grid[y][x] == CELL_EXIT && cellVisible)
             {
                 DrawRectangleLinesEx((Rectangle){ position.x, position.y, size.x, size.y }, fmaxf(2.0f, 2.0f * layout.drawScale), RAYWHITE);
             }
-            else if (grid[y][x] == CELL_LOCKED_EXIT && IsWorldPositionVisible(cellCenter))
+            else if (grid[y][x] == CELL_LOCKED_EXIT && cellVisible)
             {
                 DrawRectangleLinesEx((Rectangle){ position.x, position.y, size.x, size.y }, fmaxf(2.0f, 2.0f * layout.drawScale), GOLD);
                 DrawLineEx((Vector2){ position.x + size.x * 0.25f, position.y + size.y * 0.25f },
@@ -1961,10 +2122,11 @@ void DrawMazeGrid(void)
                            (Vector2){ position.x + size.x * 0.25f, position.y + size.y * 0.75f }, fmaxf(2.0f, 2.0f * layout.drawScale), GOLD);
             }
 
-            if (IsWorldPositionVisible(cellCenter))
+            if (cellVisible || keyPulse > 0.02f || drawHiddenExtraPulse)
             {
                 Vector2 pickupCenter = { position.x + size.x * 0.5f, position.y + size.y * 0.5f };
                 float pickupRadius = fmaxf(3.0f, 4.5f * layout.drawScale);
+                float softPickupPulse = currentRoundConfig.flashlightEnabled ? (0.55f + 0.45f * sinf((float)GetTime() * 3.4f)) : 0.0f;
 
                 if (grid[y][x] == CELL_COIN)
                 {
@@ -1974,17 +2136,30 @@ void DrawMazeGrid(void)
                 }
                 else if (grid[y][x] == CELL_AMMO_PICKUP)
                 {
-                    DrawRectangleRounded((Rectangle){ pickupCenter.x - pickupRadius * 1.4f, pickupCenter.y - pickupRadius, pickupRadius * 2.8f, pickupRadius * 2.0f }, 0.18f, 5, Fade(HUD_BORDER_COLOR, 0.35f));
-                    DrawRectangleRoundedLinesEx((Rectangle){ pickupCenter.x - pickupRadius * 1.4f, pickupCenter.y - pickupRadius, pickupRadius * 2.8f, pickupRadius * 2.0f }, 0.18f, 5, 1.5f, HUD_BORDER_COLOR);
-                    DrawLineEx((Vector2){ pickupCenter.x - pickupRadius * 0.8f, pickupCenter.y }, (Vector2){ pickupCenter.x + pickupRadius * 0.8f, pickupCenter.y }, 2.0f, RAYWHITE);
+                    Color ammoColor = cellVisible ? HUD_BORDER_COLOR : Fade(HUD_BORDER_COLOR, 0.38f + 0.30f * softPickupPulse);
+                    Color ammoCore = cellVisible ? RAYWHITE : Fade(RAYWHITE, 0.35f + 0.25f * softPickupPulse);
+                    DrawCircleV(pickupCenter, pickupRadius * (2.2f + softPickupPulse * 0.9f), Fade(HUD_BORDER_COLOR, 0.08f + 0.14f * softPickupPulse));
+                    DrawRectangleRounded((Rectangle){ pickupCenter.x - pickupRadius * 1.4f, pickupCenter.y - pickupRadius, pickupRadius * 2.8f, pickupRadius * 2.0f }, 0.18f, 5, Fade(ammoColor, cellVisible ? 0.35f : 0.18f));
+                    DrawRectangleRoundedLinesEx((Rectangle){ pickupCenter.x - pickupRadius * 1.4f, pickupCenter.y - pickupRadius, pickupRadius * 2.8f, pickupRadius * 2.0f }, 0.18f, 5, 1.5f, ammoColor);
+                    DrawLineEx((Vector2){ pickupCenter.x - pickupRadius * 0.8f, pickupCenter.y }, (Vector2){ pickupCenter.x + pickupRadius * 0.8f, pickupCenter.y }, 2.0f, ammoCore);
                 }
                 else if (grid[y][x] == CELL_BATTERY_PICKUP)
                 {
-                    DrawRectangleRoundedLinesEx((Rectangle){ pickupCenter.x - pickupRadius * 1.2f, pickupCenter.y - pickupRadius * 0.7f, pickupRadius * 2.0f, pickupRadius * 1.4f }, 0.2f, 5, 1.5f, GOLD);
-                    DrawRectangleRec((Rectangle){ pickupCenter.x + pickupRadius * 0.95f, pickupCenter.y - pickupRadius * 0.25f, pickupRadius * 0.3f, pickupRadius * 0.5f }, GOLD);
+                    Color batteryColor = cellVisible ? GOLD : Fade(GOLD, 0.36f + 0.32f * softPickupPulse);
+                    DrawCircleV(pickupCenter, pickupRadius * (2.1f + softPickupPulse * 0.8f), Fade(GOLD, 0.08f + 0.13f * softPickupPulse));
+                    DrawRectangleRoundedLinesEx((Rectangle){ pickupCenter.x - pickupRadius * 1.2f, pickupCenter.y - pickupRadius * 0.7f, pickupRadius * 2.0f, pickupRadius * 1.4f }, 0.2f, 5, 1.5f, batteryColor);
+                    DrawRectangleRec((Rectangle){ pickupCenter.x + pickupRadius * 0.95f, pickupCenter.y - pickupRadius * 0.25f, pickupRadius * 0.3f, pickupRadius * 0.5f }, batteryColor);
                 }
                 else if (grid[y][x] == CELL_KEY)
                 {
+                    if (drawHiddenKeyPulse)
+                    {
+                        DrawCircleV(pickupCenter, pickupRadius * (3.8f + keyPulse * 4.4f), Fade(GOLD, 0.16f + keyPulse * 0.62f));
+                    }
+                    else
+                    {
+                        DrawCircleV(pickupCenter, pickupRadius * (2.3f + softPickupPulse * 1.2f), Fade(GOLD, 0.12f + 0.20f * softPickupPulse));
+                    }
                     DrawCircleV((Vector2){ pickupCenter.x - pickupRadius * 0.55f, pickupCenter.y }, pickupRadius * 0.75f, Fade(GOLD, 0.25f));
                     DrawCircleLines((int)(pickupCenter.x - pickupRadius * 0.55f), (int)pickupCenter.y, pickupRadius * 0.7f, GOLD);
                     DrawLineEx((Vector2){ pickupCenter.x, pickupCenter.y }, (Vector2){ pickupCenter.x + pickupRadius * 1.25f, pickupCenter.y }, 2.0f, GOLD);
@@ -2002,8 +2177,8 @@ void DrawMazeGrid(void)
                 }
                 else if (grid[y][x] == CELL_HEALTH_PICKUP)
                 {
-                    Color healthColor = (Color){ 190, 70, 255, 255 };
-                    DrawCircleV(pickupCenter, pickupRadius * 1.8f, Fade(healthColor, 0.18f));
+                    Color healthColor = cellVisible ? (Color){ 190, 70, 255, 255 } : Fade((Color){ 190, 70, 255, 255 }, 0.36f + 0.32f * softPickupPulse);
+                    DrawCircleV(pickupCenter, pickupRadius * (1.8f + softPickupPulse * 0.9f), Fade(healthColor, 0.14f + 0.15f * softPickupPulse));
                     DrawRectangleRounded((Rectangle){ pickupCenter.x - pickupRadius * 0.35f, pickupCenter.y - pickupRadius * 1.25f, pickupRadius * 0.7f, pickupRadius * 2.5f }, 0.2f, 5, healthColor);
                     DrawRectangleRounded((Rectangle){ pickupCenter.x - pickupRadius * 1.25f, pickupCenter.y - pickupRadius * 0.35f, pickupRadius * 2.5f, pickupRadius * 0.7f }, 0.2f, 5, healthColor);
                     DrawRectangleLinesEx((Rectangle){ pickupCenter.x - pickupRadius * 1.25f, pickupCenter.y - pickupRadius * 1.25f, pickupRadius * 2.5f, pickupRadius * 2.5f }, 1.0f, Fade(RAYWHITE, 0.65f));
@@ -2371,10 +2546,6 @@ void CollectCurrentCellPickup(void)
     {
         roundPickupsCollected++;
         playerTotalAmmo += PICKUP_AMMO_VALUE;
-        if (playerTotalAmmo > playerMaxAmmo)
-        {
-            playerTotalAmmo = playerMaxAmmo;
-        }
         SpawnFloatingNotice(GetCellCenter(cellX, cellY), TextFormat("+%d MUNICAO", PICKUP_AMMO_VALUE), HUD_BORDER_COLOR);
         grid[cellY][cellX] = CELL_PATH;
     }
@@ -2421,23 +2592,15 @@ void DrainFlashlightBatteryPerSecond(void)
 {
     if (!flashlightOn)
     {
-        flashlightDrainTimer = 0.0f;
         return;
     }
 
-    flashlightDrainTimer += GetStableFrameTime();
+    flashlightBattery -= (FLASHLIGHT_DRAIN_AMOUNT / FLASHLIGHT_DRAIN_INTERVAL) * GetStableFrameTime();
 
-    while (flashlightDrainTimer >= FLASHLIGHT_DRAIN_INTERVAL && flashlightOn)
+    if (flashlightBattery <= 0.0f)
     {
-        flashlightDrainTimer -= FLASHLIGHT_DRAIN_INTERVAL;
-        flashlightBattery -= FLASHLIGHT_DRAIN_AMOUNT;
-
-        if (flashlightBattery <= 0.0f)
-        {
-            flashlightBattery = 0.0f;
-            flashlightOn = false;
-            flashlightDrainTimer = 0.0f;
-        }
+        flashlightBattery = 0.0f;
+        flashlightOn = false;
     }
 }
 
@@ -2571,13 +2734,15 @@ bool DidPlayerReachExit(void)
 void FinishRoundRewards(void)
 {
     pendingRoundBonus = 0;
+    pendingEvolutionXp = 0;
 
     if (!inTutorialSequence)
     {
-        pendingRoundBonus += roundPickupsCollected * 10;
-        if (!roundTookDamage) pendingRoundBonus += 35;
-        if (roundShotsFired <= 12) pendingRoundBonus += 25;
+        pendingRoundBonus = SHOP_ROUND_REWARD;
+        pendingEvolutionXp = EVOLUTION_ROUND_XP + (officialRound * 10) + (roundPickupsCollected * EVOLUTION_PICKUP_XP);
         playerCoins += pendingRoundBonus;
+        AddEvolutionXp(pendingEvolutionXp);
+        SaveProgressForRound(officialRound + 1, (officialRound + 1 > bestOfficialRound) ? officialRound + 1 : bestOfficialRound);
     }
 }
 
@@ -3123,6 +3288,8 @@ void StartCurrentStage(void)
 void ResetOfficialRunStats(void)
 {
     playerCoins = SHOP_START_COINS;
+    playerLevel = 1;
+    playerXp = 0;
     playerMaxHealth = PLAYER_START_HEALTH;
     playerHealth = playerMaxHealth;
     playerMaxAmmo = PLAYER_MAX_AMMO;
@@ -3148,16 +3315,17 @@ void AdvanceToNextStage(void)
         officialRound = 1;
         bestOfficialRound = 1;
         ResetOfficialRunStats();
+        SaveProgress();
         StartCurrentStage();
         return;
     }
 
-    playerCoins += SHOP_ROUND_REWARD;
     officialRound++;
     if (officialRound > bestOfficialRound)
     {
         bestOfficialRound = officialRound;
     }
+    SaveProgress();
     StartCurrentStage();
 }
 
@@ -4827,7 +4995,7 @@ void DrawVictoryOverlay(void)
 
     if (!inTutorialSequence)
     {
-        const char *bonusText = TextFormat("BONUS +%d  |  ITENS %d  |  TIROS %d", pendingRoundBonus, roundPickupsCollected, roundShotsFired);
+        const char *bonusText = TextFormat("ROUND +%d  |  ITENS %d  |  XP +%d", pendingRoundBonus, roundPickupsCollected, pendingEvolutionXp);
         DrawTextStrongFit(bonusText, (int)(panel.x + 44.0f * scale), (int)(panel.y + 148.0f * scale),
                           ScaleFontSize(10.0f), ScaleFontSize(8.0f), 0.0f, panel.width - 88.0f * scale, GOLD, BLACK);
     }
@@ -5270,6 +5438,22 @@ Rectangle GetContinueButtonRect(Rectangle panel)
     };
 }
 
+Rectangle GetOfficialRoundBackButtonRect(Rectangle panel)
+{
+    float scale = GetUIScale();
+    float buttonWidth = fmaxf(260.0f * scale, MeasureTextStrongSpaced("Round anterior", ScaleFontSize(17.0f), 1.0f * scale).x + (54.0f * scale));
+    float continueWidth = fmaxf(260.0f * scale, MeasureTextStrongSpaced(T(TEXT_CONTINUE_TUTORIAL), ScaleFontSize(18.0f), 1.0f * scale).x + (82.0f * scale));
+    float gap = 18.0f * scale;
+    float totalWidth = buttonWidth + gap + continueWidth;
+
+    return (Rectangle){
+        panel.x + (panel.width - totalWidth) * 0.5f,
+        panel.y + panel.height + (16.0f * scale),
+        buttonWidth,
+        50.0f * scale
+    };
+}
+
 void DrawButtonArrow(Rectangle button, Color color)
 {
     float scale = GetUIScale();
@@ -5280,6 +5464,19 @@ void DrawButtonArrow(Rectangle button, Color color)
 
     DrawLineEx(start, end, 3.0f * scale, color);
     DrawTriangle(end, top, bottom, color);
+}
+
+void DrawRoundBackButton(Rectangle button)
+{
+    float scale = GetUIScale();
+    Vector2 mousePosition = GetMousePosition();
+    bool hovered = CheckCollisionPointRec(mousePosition, button);
+    Color fill = hovered ? (Color){ 55, 72, 155, 255 } : (Color){ 17, 30, 78, 255 };
+    int fontSize = FitFontSizeToWidth("Round anterior", ScaleFontSize(17.0f), ScaleFontSize(10.0f), 0.7f * scale, button.width - 40.0f * scale);
+
+    DrawRectangleRounded(button, 0.28f, 10, fill);
+    DrawRectangleRoundedLinesEx(button, 0.28f, 10, 2.0f, HUD_BORDER_COLOR);
+    DrawTextStrongSpaced("Round anterior", (int)(button.x + 20.0f * scale), (int)(button.y + (button.height - fontSize) * 0.45f), fontSize, 0.7f * scale, RAYWHITE, BLACK);
 }
 
 void DrawContinueButton(Rectangle continueButton)
@@ -5302,6 +5499,13 @@ void DrawPanelButtons(Rectangle panel)
 
     if (!inTutorialSequence)
     {
+        if (officialRound > 1)
+        {
+            Rectangle backButton = GetOfficialRoundBackButtonRect(panel);
+            continueButton.x = backButton.x + backButton.width + (18.0f * GetUIScale());
+            DrawRoundBackButton(backButton);
+        }
+
         DrawContinueButton(continueButton);
         return;
     }
@@ -5377,6 +5581,7 @@ bool HandlePanelButtons(void)
         officialRound = 1;
         bestOfficialRound = 1;
         ResetOfficialRunStats();
+        SaveProgress();
         StartCurrentStage();
         return true;
     }
@@ -5394,6 +5599,14 @@ bool HandlePanelButtons(void)
             gamePhase = PHASE_PLAYING;
         }
 
+        return true;
+    }
+
+    if (!inTutorialSequence && officialRound > 1 && CheckCollisionPointRec(mousePosition, GetOfficialRoundBackButtonRect(panel)))
+    {
+        officialRound--;
+        SaveProgress();
+        StartCurrentStage();
         return true;
     }
 
@@ -5658,7 +5871,7 @@ void DrawShopPanel(void)
     int coinsSize = ScaleShopFontSize(11.0f);
     bool batteryAvailable = IsShopBatteryAvailable();
     bool healthCanGrow = playerMaxHealth < PLAYER_MAX_HEALTH;
-    bool ammoCanGrow = playerTotalAmmo < PLAYER_MAX_AMMO_CAP;
+    bool ammoCanGrow = true;
 
     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Fade(BLACK, 0.78f));
     DrawRectangleRounded(panel, 0.08f, 12, (Color){ 6, 12, 36, 245 });
@@ -5673,6 +5886,10 @@ void DrawShopPanel(void)
                          smallSize, 0.0f, (Color){ 0, 245, 255, 255 }, BLACK);
     DrawTextStrongSpaced(T(TEXT_SHOP_TITLE), (int)(panel.x + 30.0f * scale), (int)(panel.y + 104.0f * scale),
                          titleSize, 1.0f * scale, RAYWHITE, MAGENTA);
+    DrawTextStrongFit(TextFormat("EVOLUCAO NIVEL %d  XP %d/%d", playerLevel, playerXp, GetEvolutionXpToNextLevel()),
+                      (int)(panel.x + 250.0f * scale), (int)(panel.y + 116.0f * scale),
+                      ScaleShopFontSize(10.0f), ScaleShopFontSize(8.0f), 0.0f,
+                      panel.width - 460.0f * scale, (Color){ 120, 230, 255, 255 }, BLACK);
 
     DrawRectangleRounded(coinPill, 0.2f, 8, (Color){ 35, 30, 0, 255 });
     DrawRectangleRoundedLinesEx(coinPill, 0.2f, 8, 1.5f * scale, GOLD);
@@ -5717,22 +5934,12 @@ bool HandleShopButtons(void)
         return true;
     }
 
-    if (CheckCollisionPointRec(mousePosition, GetShopButtonRect(0)) && playerTotalAmmo < PLAYER_MAX_AMMO_CAP && playerCoins >= SHOP_STANDARD_PRICE)
+    if (CheckCollisionPointRec(mousePosition, GetShopButtonRect(0)) && playerCoins >= SHOP_STANDARD_PRICE)
     {
         playerCoins -= SHOP_STANDARD_PRICE;
-        if (playerMaxAmmo < PLAYER_MAX_AMMO_CAP)
-        {
-            playerMaxAmmo += SHOP_AMMO_GAIN;
-            if (playerMaxAmmo > PLAYER_MAX_AMMO_CAP)
-            {
-                playerMaxAmmo = PLAYER_MAX_AMMO_CAP;
-            }
-        }
+        playerMaxAmmo += SHOP_AMMO_GAIN;
         playerTotalAmmo += SHOP_AMMO_GAIN;
-        if (playerTotalAmmo > PLAYER_MAX_AMMO_CAP)
-        {
-            playerTotalAmmo = PLAYER_MAX_AMMO_CAP;
-        }
+        SaveProgress();
         return true;
     }
 
@@ -5745,6 +5952,7 @@ bool HandleShopButtons(void)
             playerMaxHealth = PLAYER_MAX_HEALTH;
         }
         playerHealth = playerMaxHealth;
+        SaveProgress();
         return true;
     }
 
@@ -5752,6 +5960,7 @@ bool HandleShopButtons(void)
     {
         playerCoins -= SHOP_LIGHTNING_PRICE;
         lightningCharges++;
+        SaveProgress();
         return true;
     }
 
@@ -5759,6 +5968,7 @@ bool HandleShopButtons(void)
     {
         playerCoins -= SHOP_STANDARD_PRICE;
         flashlightBattery = FLASHLIGHT_MAX_BATTERY;
+        SaveProgress();
         return true;
     }
 
@@ -5776,6 +5986,7 @@ int main(int argc, char *argv[])
     SetTargetFPS(60);
     SetRandomSeed((unsigned int)GetTime());
     UpdateBuildMetrics(argv[0]);
+    LoadProgress();
 
     while (!WindowShouldClose())
     {
