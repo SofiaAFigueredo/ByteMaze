@@ -77,8 +77,10 @@ run: $(APP_BIN)
 
 size: $(APP_BIN)
 	@bytes=$$(wc -c < $(APP_BIN) | tr -d ' '); \
-	percent=$$(awk 'BEGIN { printf "%.2f", ('"$$bytes"' / $(CONTEST_LIMIT)) * 100 }'); \
-	echo "$$bytes bytes ($$percent% de $(CONTEST_LIMIT))"
+	asset_bytes=$$(if [ -d src/assets ]; then find src/assets -type f -exec wc -c {} \; | awk '{s+=$$1} END {print s+0}'; else echo 0; fi); \
+	total=$$((bytes + asset_bytes)); \
+	percent=$$(awk 'BEGIN { printf "%.2f", ('"$$total"' / $(CONTEST_LIMIT)) * 100 }'); \
+	echo "$$total bytes ($$bytes executavel + $$asset_bytes assets, $$percent% de $(CONTEST_LIMIT))"
 
 clean:
 	rm -rf $(RAYLIB_BUILD_DIR) $(APP) $(APP).exe

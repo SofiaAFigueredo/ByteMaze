@@ -47,17 +47,17 @@
 #define PLAYER_COLLISION_STEP 2.0f
 #define PLAYER_COLLISION_SKIN 1.0f
 #define PLAYER_WALL_RADIUS_SCALE 0.72f
-#define MUSIC_BASE_VOLUME 0.12f
-#define MUSIC_NEAR_ENEMY_VOLUME 0.45f
+#define MUSIC_BASE_VOLUME 0.35f
+#define MUSIC_NEAR_ENEMY_VOLUME 0.78f
 #define MUSIC_NEAR_ENEMY_DISTANCE (TILE_SIZE * 8.0f)
-#define PLAYER_SHOT_VOLUME 0.7f
-#define ENEMY_SHOT_VOLUME 0.65f
-#define PLAYER_RELOAD_VOLUME 0.75f
-#define PLAYER_MOVE_VOLUME 0.72f
-#define VICTORY_VOLUME 0.8f
-#define GAME_OVER_VOLUME 0.8f
+#define PLAYER_SHOT_VOLUME 0.95f
+#define ENEMY_SHOT_VOLUME 0.9f
+#define PLAYER_RELOAD_VOLUME 0.9f
+#define PLAYER_MOVE_VOLUME 0.78f
+#define VICTORY_VOLUME 0.95f
+#define GAME_OVER_VOLUME 0.95f
 #define AUDIO_SAMPLE_RATE 22050
-#define UI_FONT_PATH "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
+#define UI_FONT_PATH "/assets/fonts/PressStart2P-Regular.ttf"
 #define UI_FONT_BAKE_SIZE 48
 #define UI_MAX_CODEPOINTS 512
 #define BOSS_FAR_DISTANCE_THRESHOLD (TILE_SIZE * 10.0f)
@@ -250,7 +250,37 @@ float GetContestUsagePercent(long long usedBytes)
 
 long long GetRuntimeAssetSizeBytes(void)
 {
-    return 0;
+    const char *bundledAssetPathGroups[][4] = {
+        {
+            "assets/fonts/PressStart2P-Regular.ttf",
+            "src/assets/fonts/PressStart2P-Regular.ttf",
+            NULL,
+            NULL
+        },
+        {
+            "assets/fonts/NotoSansKR-Subset-Bold.ttf",
+            "src/assets/fonts/NotoSansKR-Subset-Bold.ttf",
+            NULL,
+            NULL
+        }
+    };
+    long long totalBytes = 0;
+    int groupCount = (int)(sizeof(bundledAssetPathGroups) / sizeof(bundledAssetPathGroups[0]));
+
+    for (int groupIndex = 0; groupIndex < groupCount; groupIndex++)
+    {
+        for (int pathIndex = 0; bundledAssetPathGroups[groupIndex][pathIndex] != NULL; pathIndex++)
+        {
+            long long fileSize = GetFileSizeBytes(bundledAssetPathGroups[groupIndex][pathIndex]);
+            if (fileSize > 0)
+            {
+                totalBytes += fileSize;
+                break;
+            }
+        }
+    }
+
+    return totalBytes;
 }
 
 void UpdateBuildMetrics(const char *executablePath)
@@ -493,6 +523,8 @@ typedef enum TextId
     TEXT_HUD_FILL_AMMO,
     TEXT_HUD_LANTERNA,
     TEXT_RELOAD_IN_PROGRESS,
+    TEXT_STAGE_COMPLETE,
+    TEXT_NEXT_ROUND,
     TEXT_COUNT
 } TextId;
 
@@ -530,6 +562,7 @@ void UpdateGameAudio(void);
 void ShutdownGameAudio(void);
 void InitUIFont(void);
 void ShutdownUIFont(void);
+void DrawButtonArrow(Rectangle button, Color color);
 Vector2 MeasureTextStrongSpaced(const char *text, int fontSize, float spacing);
 
 float GetUIScale(void)
@@ -542,12 +575,10 @@ float GetUIScale(void)
 int ScaleFontSize(float fontSize)
 {
     /* Global readability boost: every label in the game (HUD, buttons, tutorial
-     * panels, language selector) reads this value, so bumping it here
-     * raises legibility everywhere at once instead of hunting down each
-     * call site - and it stays responsive since it's still multiplied by
-     * GetUIScale(), and every fitted label (DrawTextStrongFit) shrinks
-     * itself back down if the extra size wouldn't fit its box. */
-    #define UI_READABILITY_BOOST 1.62f
+     * panels, language selector) reads this value. The game now uses the
+     * loaded system font instead of raylib's pixel fallback, so this keeps
+     * text comfortably large without making fitted HUD labels collide. */
+    #define UI_READABILITY_BOOST 1.48f
     return (int)fmaxf(13.0f, roundf(fontSize * UI_READABILITY_BOOST * GetUIScale()));
 }
 
@@ -595,7 +626,9 @@ const char *uiText[LANGUAGE_COUNT][TEXT_COUNT] = {
         [TEXT_HUD_RECARREGAR] = "RECARREGAR",
         [TEXT_HUD_FILL_AMMO] = "Preencher balas",
         [TEXT_HUD_LANTERNA] = "LANTERNA",
-        [TEXT_RELOAD_IN_PROGRESS] = "Recarregando"
+        [TEXT_RELOAD_IN_PROGRESS] = "Recarregando",
+        [TEXT_STAGE_COMPLETE] = "%s %d completo!",
+        [TEXT_NEXT_ROUND] = "Proximo round"
     },
     [LANGUAGE_ES] = {
         [TEXT_LANGUAGE_NAME] = "ES",
@@ -635,7 +668,9 @@ const char *uiText[LANGUAGE_COUNT][TEXT_COUNT] = {
         [TEXT_HUD_RECARREGAR] = "RECARGAR",
         [TEXT_HUD_FILL_AMMO] = "Rellenar balas",
         [TEXT_HUD_LANTERNA] = "LINTERNA",
-        [TEXT_RELOAD_IN_PROGRESS] = "Recargando"
+        [TEXT_RELOAD_IN_PROGRESS] = "Recargando",
+        [TEXT_STAGE_COMPLETE] = "%s %d completado!",
+        [TEXT_NEXT_ROUND] = "Siguiente ronda"
     },
     [LANGUAGE_EN] = {
         [TEXT_LANGUAGE_NAME] = "EN",
@@ -675,7 +710,9 @@ const char *uiText[LANGUAGE_COUNT][TEXT_COUNT] = {
         [TEXT_HUD_RECARREGAR] = "RELOAD",
         [TEXT_HUD_FILL_AMMO] = "Refill ammo",
         [TEXT_HUD_LANTERNA] = "FLASHLIGHT",
-        [TEXT_RELOAD_IN_PROGRESS] = "Reloading"
+        [TEXT_RELOAD_IN_PROGRESS] = "Reloading",
+        [TEXT_STAGE_COMPLETE] = "%s %d complete!",
+        [TEXT_NEXT_ROUND] = "Next round"
     },
     [LANGUAGE_KO] = {
         [TEXT_LANGUAGE_NAME] = "KO",
@@ -715,7 +752,9 @@ const char *uiText[LANGUAGE_COUNT][TEXT_COUNT] = {
         [TEXT_HUD_RECARREGAR] = "재장전",
         [TEXT_HUD_FILL_AMMO] = "탄약 채우기",
         [TEXT_HUD_LANTERNA] = "손전등",
-        [TEXT_RELOAD_IN_PROGRESS] = "재장전 중"
+        [TEXT_RELOAD_IN_PROGRESS] = "재장전 중",
+        [TEXT_STAGE_COMPLETE] = "%s %d 완료!",
+        [TEXT_NEXT_ROUND] = "다음 라운드"
     }
 };
 
@@ -726,12 +765,12 @@ const char *T(TextId id)
 
 Font GetUIFont(void)
 {
-    return GetFontDefault();
+    return uiFontLoaded ? uiFont : GetFontDefault();
 }
 
 Font GetUILatinFont(void)
 {
-    return GetFontDefault();
+    return uiLatinFontLoaded ? uiLatinFont : GetFontDefault();
 }
 
 /* True: this codepoint belongs to the Korean Hangul ranges and must use
@@ -766,6 +805,18 @@ static const char *uiFontRelativeCandidates[] = {
 };
 
 static const char *uiLatinFontRelativeCandidates[] = {
+    "C:\\Windows\\Fonts\\segoeui.ttf",
+    "C:\\Windows\\Fonts\\segoeuib.ttf",
+    "C:\\Windows\\Fonts\\arial.ttf",
+    "C:\\Windows\\Fonts\\arialbd.ttf",
+    "C:/Windows/Fonts/segoeui.ttf",
+    "C:/Windows/Fonts/segoeuib.ttf",
+    "C:/Windows/Fonts/arial.ttf",
+    "C:/Windows/Fonts/arialbd.ttf",
+    "/mnt/c/Windows/Fonts/segoeui.ttf",
+    "/mnt/c/Windows/Fonts/segoeuib.ttf",
+    "/mnt/c/Windows/Fonts/arial.ttf",
+    "/mnt/c/Windows/Fonts/arialbd.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
     NULL
@@ -926,7 +977,7 @@ int *BuildUICodepoints(int *codepointCount)
         "통로에서멈추지말고이동하세요같은행이나열에서벽없이마주치면멈추고발사합니다"
         "재장전사용할수있습니다켜고끕니다모퉁이와출구를확인할때짧게사용하세요"
         "난이도상승올라갈수록더빠르고자주길을계산합니다타이밍관리가중요합니다"
-        "감갑경과규께껴꿉끄넓능대되된됩둠든들또뜻럼려맞매박방버번변별부비성센순쏘쏠쓰안압야여옵외의절접정죽줍즉착찰처충칙켭키튼퍼피함항향혀화활후";
+        "감갑경과규께껴꿉끄넓능대되된됩둠든들또뜻럼려맞매박방버번변별부비성센순쏘쏠쓰안압야여옵외의절접정죽줍즉착찰처충칙켭키튼퍼피함항향혀화활후완료다음";
     int extraKoreanLength = (int)strlen(extraKoreanText);
     for (int byteIndex = 0; byteIndex < extraKoreanLength; )
     {
@@ -1215,6 +1266,15 @@ bool IsWorldPositionVisible(Vector2 position)
     return false;
 }
 
+float GetReadableGlyphSpacing(bool isHangul, float spacing)
+{
+    float scale = GetUIScale();
+    float glyphSpacing = isHangul ? spacing * 0.35f : spacing;
+    float minimumSpacing = isHangul ? 0.20f * scale : 0.45f * scale;
+
+    return fmaxf(glyphSpacing, minimumSpacing);
+}
+
 /* Draws one line (no '\n'), using a readable Latin font for PT/ES/EN and
  * a Korean-capable font only for Hangul glyphs. */
 void DrawMixedLine(Font latinFont, Font cjkFont, const char *line, Vector2 position, float fontSize, float spacing)
@@ -1234,7 +1294,7 @@ void DrawMixedLine(Font latinFont, Font cjkFont, const char *line, Vector2 posit
 
         bool isHangul = IsHangulCodepoint(codepoint);
         Font font = isHangul ? cjkFont : latinFont;
-        float glyphSpacing = isHangul ? spacing * 0.35f : spacing;
+        float glyphSpacing = GetReadableGlyphSpacing(isHangul, spacing);
 
         char glyphBuf[8];
         int copyLen = (codepointByteCount < 7) ? codepointByteCount : 7;
@@ -1254,6 +1314,7 @@ Vector2 MeasureMixedLine(Font latinFont, Font cjkFont, const char *line, float f
     int length = (int)strlen(line);
     int byteIndex = 0;
     float width = 0.0f;
+    float lastGlyphSpacing = 0.0f;
 
     while (byteIndex < length)
     {
@@ -1266,7 +1327,7 @@ Vector2 MeasureMixedLine(Font latinFont, Font cjkFont, const char *line, float f
 
         bool isHangul = IsHangulCodepoint(codepoint);
         Font font = isHangul ? cjkFont : latinFont;
-        float glyphSpacing = isHangul ? spacing * 0.35f : spacing;
+        float glyphSpacing = GetReadableGlyphSpacing(isHangul, spacing);
 
         char glyphBuf[8];
         int copyLen = (codepointByteCount < 7) ? codepointByteCount : 7;
@@ -1275,19 +1336,21 @@ Vector2 MeasureMixedLine(Font latinFont, Font cjkFont, const char *line, float f
 
         Vector2 glyphSize = MeasureTextEx(font, glyphBuf, fontSize, 0.0f);
         width += glyphSize.x + glyphSpacing;
+        lastGlyphSpacing = glyphSpacing;
 
         byteIndex += codepointByteCount;
     }
 
     if (width > 0.0f)
     {
-        width -= spacing;
+        width -= lastGlyphSpacing;
     }
 
     return (Vector2){ width, fontSize };
 }
 
-/* Handles '\n' without faking bold with many offset copies. */
+/* Handles '\n' with a single medium-weight pass and a small shadow, instead
+ * of faking heavy bold with many offset copies. */
 void DrawTextBoldEx(Font latinFont, Font cjkFont, const char *text, Vector2 position, float fontSize, float spacing, Color color)
 {
     float lineHeight = fontSize * 1.4f;
@@ -1325,10 +1388,12 @@ void DrawTextStrong(const char *text, int x, int y, int fontSize, Color color, C
 {
     Font latinFont = GetUILatinFont();
     Font cjkFont = GetUIFont();
-    Vector2 shadowPos = { (float)(x + 2), (float)(y + 2) };
+    float shadowOffset = fmaxf(1.0f, GetUIScale());
+    Vector2 shadowPos = { (float)x + shadowOffset, (float)y + shadowOffset };
     Vector2 textPos = { (float)x, (float)y };
+    Color softShadow = Fade(shadowColor, 0.62f);
 
-    DrawTextBoldEx(latinFont, cjkFont, text, shadowPos, (float)fontSize, 1.0f, shadowColor);
+    DrawTextBoldEx(latinFont, cjkFont, text, shadowPos, (float)fontSize, 1.0f, softShadow);
     DrawTextBoldEx(latinFont, cjkFont, text, textPos, (float)fontSize, 1.0f, color);
 }
 
@@ -1338,10 +1403,12 @@ void DrawTextStrongSpaced(const char *text, int x, int y, int fontSize, float sp
 {
     Font latinFont = GetUILatinFont();
     Font cjkFont = GetUIFont();
-    Vector2 shadowPos = { (float)(x + 2), (float)(y + 2) };
+    float shadowOffset = fmaxf(1.0f, GetUIScale());
+    Vector2 shadowPos = { (float)x + shadowOffset, (float)y + shadowOffset };
     Vector2 textPos = { (float)x, (float)y };
+    Color softShadow = Fade(shadowColor, 0.62f);
 
-    DrawTextBoldEx(latinFont, cjkFont, text, shadowPos, (float)fontSize, spacing, shadowColor);
+    DrawTextBoldEx(latinFont, cjkFont, text, shadowPos, (float)fontSize, spacing, softShadow);
     DrawTextBoldEx(latinFont, cjkFont, text, textPos, (float)fontSize, spacing, color);
 }
 
@@ -2584,6 +2651,21 @@ void AdvanceToNextStage(void)
     StartCurrentStage();
 }
 
+const char *GetStageCompleteLabel(void)
+{
+    if (inTutorialSequence)
+    {
+        return "TUTORIAL";
+    }
+
+    switch (currentLanguage)
+    {
+        case LANGUAGE_ES: return "RONDA";
+        case LANGUAGE_KO: return "라운드";
+        default: return "ROUND";
+    }
+}
+
 int CollectEnemyDirections(Enemy *enemy, Vector2 options[4], bool allowReverse)
 {
     Vector2 oppositeDirection = { -enemy->direction.x, -enemy->direction.y };
@@ -3314,7 +3396,7 @@ Sound CreateSynthSound(int soundType)
             value = sinf(t * freq * 6.2831853f) * envelope;
         }
 
-        samples[i] = (int16_t)(fmaxf(-1.0f, fminf(1.0f, value * 0.55f)) * 32767.0f);
+        samples[i] = (int16_t)(fmaxf(-1.0f, fminf(1.0f, value * 0.82f)) * 32767.0f);
     }
 
     Wave wave = {
@@ -3332,6 +3414,14 @@ Sound CreateSynthSound(int soundType)
 void InitGameAudio(void)
 {
     InitAudioDevice();
+    if (!IsAudioDeviceReady())
+    {
+        gameAudioLoaded = false;
+        return;
+    }
+
+    SetMasterVolume(1.0f);
+
     playerShotSound = CreateSynthSound(0);
     enemyShotSound = CreateSynthSound(1);
     playerReloadSound = CreateSynthSound(2);
@@ -3345,6 +3435,7 @@ void InitGameAudio(void)
     SetSoundVolume(playerMoveSound, PLAYER_MOVE_VOLUME);
     SetSoundVolume(victorySound, VICTORY_VOLUME);
     SetSoundVolume(gameOverSound, GAME_OVER_VOLUME);
+
     gameAudioLoaded = true;
 }
 
@@ -4039,6 +4130,118 @@ void DrawGameOverOverlay(void)
     }
 }
 
+Rectangle GetVictoryNextButtonRect(Rectangle panel)
+{
+    float scale = GetUIScale();
+
+    return (Rectangle){
+        panel.x + 70.0f * scale,
+        panel.y + 148.0f * scale,
+        panel.width - 140.0f * scale,
+        58.0f * scale
+    };
+}
+
+void DrawVictoryOverlay(void)
+{
+    float scale = GetUIScale();
+    int screenWidth = GetScreenWidth();
+    int screenHeight = GetScreenHeight();
+    int completedNumber = inTutorialSequence ? tutorialRound : officialRound;
+    const char *title = TextFormat(T(TEXT_STAGE_COMPLETE), GetStageCompleteLabel(), completedNumber);
+    const char *buttonText = T(TEXT_NEXT_ROUND);
+    int titleFontSize = ScaleFontSize(33.0f);
+    int buttonFontSize = ScaleFontSize(22.0f);
+    float panelWidth = fminf((float)screenWidth - 40.0f * scale, 540.0f * scale);
+    float panelHeight = 250.0f * scale;
+    Rectangle panel = {
+        ((float)screenWidth - panelWidth) * 0.5f,
+        ((float)screenHeight - panelHeight) * 0.5f,
+        panelWidth,
+        panelHeight
+    };
+    Rectangle button = GetVictoryNextButtonRect(panel);
+    Vector2 mousePosition = GetMousePosition();
+    bool isButtonHovered = CheckCollisionPointRec(mousePosition, button);
+    Color successColor = (Color){ 65, 230, 150, 255 };
+    Color buttonColor = isButtonHovered ? (Color){ 120, 255, 190, 255 } : successColor;
+
+    titleFontSize = FitFontSizeToWidth(title, titleFontSize, ScaleFontSize(18.0f), 0.8f * scale, panel.width - 48.0f * scale);
+    buttonFontSize = FitFontSizeToWidth(buttonText, buttonFontSize, ScaleFontSize(13.0f), 0.7f * scale, button.width - 62.0f * scale);
+
+    int titleWidth = (int)MeasureTextStrongSpaced(title, titleFontSize, 0.8f * scale).x;
+
+    DrawRectangle(0, 0, screenWidth, screenHeight, Fade(BLACK, 0.62f));
+    DrawRectangleRounded((Rectangle){ panel.x - 12.0f * scale, panel.y - 12.0f * scale, panel.width + 24.0f * scale, panel.height + 24.0f * scale }, 0.14f, 12, Fade(successColor, 0.12f));
+    DrawRectangleRounded((Rectangle){ panel.x - 4.0f * scale, panel.y - 4.0f * scale, panel.width + 8.0f * scale, panel.height + 8.0f * scale }, 0.13f, 12, Fade(HUD_BORDER_COLOR, 0.20f));
+    DrawRectangleRounded(panel, 0.12f, 12, (Color){ 6, 18, 34, 250 });
+    DrawRectangleRoundedLinesEx(panel, 0.12f, 12, 2.0f * scale, successColor);
+
+    Vector2 badgeCenter = { panel.x + panel.width * 0.5f, panel.y + 42.0f * scale };
+    DrawCircleV(badgeCenter, 22.0f * scale, Fade(successColor, 0.20f));
+    DrawCircleLinesV(badgeCenter, 19.0f * scale, successColor);
+    DrawLineEx((Vector2){ badgeCenter.x - 8.0f * scale, badgeCenter.y },
+               (Vector2){ badgeCenter.x - 2.0f * scale, badgeCenter.y + 7.0f * scale },
+               3.0f * scale, successColor);
+    DrawLineEx((Vector2){ badgeCenter.x - 2.0f * scale, badgeCenter.y + 7.0f * scale },
+               (Vector2){ badgeCenter.x + 10.0f * scale, badgeCenter.y - 8.0f * scale },
+               3.0f * scale, successColor);
+
+    DrawTextStrongSpaced(title,
+                         (int)(panel.x + (panel.width - (float)titleWidth) * 0.5f),
+                         (int)(panel.y + 82.0f * scale),
+                         titleFontSize,
+                         0.8f * scale,
+                         RAYWHITE,
+                         successColor);
+    DrawLineEx((Vector2){ panel.x + 42.0f * scale, panel.y + 130.0f * scale },
+               (Vector2){ panel.x + panel.width - 42.0f * scale, panel.y + 130.0f * scale },
+               1.0f * scale, Fade(successColor, 0.42f));
+
+    DrawRectangleRounded((Rectangle){ button.x - 2.0f * scale, button.y - 2.0f * scale, button.width + 4.0f * scale, button.height + 4.0f * scale }, 0.32f, 12, Fade(buttonColor, isButtonHovered ? 0.42f : 0.24f));
+    DrawRectangleRounded(button, 0.3f, 12, buttonColor);
+    DrawRectangleRoundedLinesEx(button, 0.3f, 12, 1.5f * scale, RAYWHITE);
+    DrawTextStrongSpaced(buttonText,
+                         (int)(button.x + 20.0f * scale),
+                         (int)(button.y + (button.height - (float)buttonFontSize) * 0.45f),
+                         buttonFontSize,
+                         0.7f * scale,
+                         BLACK,
+                         Fade(WHITE, 0.25f));
+    DrawButtonArrow(button, BLACK);
+}
+
+bool HandleVictoryButton(void)
+{
+    if (gamePhase != PHASE_PLAYING || !waitingForVictorySound || !IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+    {
+        return false;
+    }
+
+    float scale = GetUIScale();
+    float panelWidth = fminf((float)GetScreenWidth() - 40.0f * scale, 540.0f * scale);
+    float panelHeight = 250.0f * scale;
+    Rectangle panel = {
+        ((float)GetScreenWidth() - panelWidth) * 0.5f,
+        ((float)GetScreenHeight() - panelHeight) * 0.5f,
+        panelWidth,
+        panelHeight
+    };
+
+    if (CheckCollisionPointRec(GetMousePosition(), GetVictoryNextButtonRect(panel)))
+    {
+        if (gameAudioLoaded && IsSoundPlaying(victorySound))
+        {
+            StopSound(victorySound);
+        }
+
+        AdvanceToNextStage();
+        return true;
+    }
+
+    return false;
+}
+
 void DrawPlayer(void)
 {
     MazeLayout layout = GetMazeLayout();
@@ -4554,6 +4757,7 @@ int main(int argc, char *argv[])
         UpdateGameAudio();
         HandleLanguageButtons();
         HandlePanelButtons();
+        HandleVictoryButton();
 
         if (gamePhase == PHASE_INTRO)
         {
@@ -4578,10 +4782,7 @@ int main(int argc, char *argv[])
             {
                 if (waitingForVictorySound)
                 {
-                    if (!gameAudioLoaded || !IsSoundPlaying(victorySound))
-                    {
-                        AdvanceToNextStage();
-                    }
+                    /* Victory waits on the completion overlay button now. */
                 }
                 else
                 {
@@ -4615,12 +4816,9 @@ int main(int argc, char *argv[])
                         if (gameAudioLoaded)
                         {
                             PlaySound(victorySound);
-                            waitingForVictorySound = true;
                         }
-                        else
-                        {
-                            AdvanceToNextStage();
-                        }
+
+                        waitingForVictorySound = true;
                     }
                 }
             }
@@ -4643,6 +4841,11 @@ int main(int argc, char *argv[])
         if (gamePhase == PHASE_PLAYING && !playerAlive)
         {
             DrawGameOverOverlay();
+        }
+
+        if (gamePhase == PHASE_PLAYING && playerAlive && waitingForVictorySound)
+        {
+            DrawVictoryOverlay();
         }
 
         if (gamePhase == PHASE_INTRO)
