@@ -24,10 +24,19 @@
 #define CELL_WALL 0
 #define CELL_PATH 1
 #define CELL_EXIT 2
+#define CELL_COIN 3
+#define CELL_AMMO_PICKUP 4
+#define CELL_BATTERY_PICKUP 5
+#define CELL_KEY 6
+#define CELL_LOCKED_EXIT 7
+#define CELL_RELIC 8
+#define CELL_HEALTH_PICKUP 9
 #define RED_ENEMY_COUNT 3
 #define BLUE_ENEMY_COUNT 2
 #define MAX_BULLETS 48
-#define FLASHLIGHT_MAX_BATTERY 100.0f
+#define FLASHLIGHT_MAX_BATTERY 50.0f
+#define FLASHLIGHT_DRAIN_INTERVAL 1.0f
+#define FLASHLIGHT_DRAIN_AMOUNT 5.0f
 #define PLAYER_BULLET_SPEED 220.0f
 #define BLUE_BULLET_SPEED 140.0f
 #define BOSS_BULLET_SPEED 150.0f
@@ -37,11 +46,29 @@
 #define ENEMY_KNOCKOUT_TIME 5.0f
 #define BOSS_HIT_LIMIT 5
 #define PLAYER_MAX_HEALTH 100
-#define PLAYER_MAX_AMMO 15
+#define PLAYER_MAGAZINE_SIZE 15
+#define PLAYER_MAX_AMMO 100
+#define PLAYER_MAX_AMMO_CAP 300
+#define SHOP_AMMO_GAIN 50
 #define PLAYER_RELOAD_TIME 1.5f
-#define BLUE_BULLET_DAMAGE 10
+#define BLUE_BULLET_DAMAGE 15
 #define ENEMY_TOUCH_DAMAGE 25
 #define PLAYER_DAMAGE_COOLDOWN 1.0f
+#define PLAYER_START_HEALTH 50
+#define SHOP_START_COINS 0
+#define SHOP_ROUND_REWARD 50
+#define SHOP_STANDARD_PRICE 100
+#define SHOP_LIGHTNING_PRICE 400
+#define SHOP_HEALTH_GAIN 5
+#define PICKUP_COIN_VALUE 25
+#define PICKUP_AMMO_VALUE 15
+#define PICKUP_BATTERY_VALUE 15.0f
+#define PICKUP_RELIC_COINS 75
+#define PICKUP_HEALTH_VALUE 15
+#define LIGHTNING_REVEAL_INTERVAL 15.0f
+#define LIGHTNING_REVEAL_TIME 3.0f
+#define MAX_FLOATING_NOTICES 12
+#define FLOATING_NOTICE_TIME 1.25f
 #define PLAYER_CROWD_RADIUS (TILE_SIZE * 2.75f)
 #define PLAYER_MAX_NEAR_ENEMIES 2
 #define PLAYER_COLLISION_STEP 2.0f
@@ -53,8 +80,7 @@
 #define PLAYER_SHOT_VOLUME 0.95f
 #define ENEMY_SHOT_VOLUME 0.9f
 #define PLAYER_RELOAD_VOLUME 0.9f
-#define PLAYER_MOVE_VOLUME 0.78f
-#define VICTORY_VOLUME 0.95f
+#define VICTORY_VOLUME 0.62f
 #define GAME_OVER_VOLUME 0.95f
 #define AUDIO_SAMPLE_RATE 22050
 #define UI_FONT_PATH "/assets/fonts/PressStart2P-Regular.ttf"
@@ -64,15 +90,49 @@
 #define BOSS_FAR_SPEED_MULTIPLIER 1.8f
 #define MAX_SIMULATION_FRAME_TIME (1.0f / 45.0f)
 
+typedef struct FloatingNotice
+{
+    Vector2 position;
+    char text[32];
+    Color color;
+    float timer;
+} FloatingNotice;
+
 int grid[GRID_HEIGTH][GRID_WIDTH];
 long long executableSizeBytes = -1;
 float executableUsagePercent = 0.0f;
 bool flashlightOn = false;
 float flashlightBattery = FLASHLIGHT_MAX_BATTERY;
-int playerHealth = PLAYER_MAX_HEALTH;
-int playerAmmo = PLAYER_MAX_AMMO;
+float flashlightDrainTimer = 0.0f;
+int playerMaxHealth = PLAYER_START_HEALTH;
+int playerHealth = PLAYER_START_HEALTH;
+int playerMaxAmmo = PLAYER_MAX_AMMO;
+int playerAmmo = PLAYER_MAGAZINE_SIZE;
+int playerTotalAmmo = PLAYER_MAX_AMMO;
 float playerReloadTimer = 0.0f;
 float playerDamageCooldown = 0.0f;
+int playerCoins = SHOP_START_COINS;
+int lightningCharges = 0;
+float lightningAutoTimer = 0.0f;
+float lightningRevealTimer = 0.0f;
+bool hasExitKey = false;
+int lockedExitCellX = -1;
+int lockedExitCellY = -1;
+FloatingNotice floatingNotices[MAX_FLOATING_NOTICES] = { 0 };
+int roundPickupsCollected = 0;
+int roundShotsFired = 0;
+bool roundTookDamage = false;
+int pendingRoundBonus = 0;
+
+extern bool inTutorialSequence;
+extern int officialRound;
+bool IsCellOccupiedByEnemy(int cellX, int cellY);
+Vector2 GetCellCenter(int cellX, int cellY);
+
+bool IsLockedExitRound(void)
+{
+    return !inTutorialSequence && officialRound >= 4;
+}
 
 Color HUD_PANEL_COLOR = { 5, 10, 32, 232 };
 /* Softer, less saturated than the original neon cyan/magenta so the maze
@@ -329,6 +389,8 @@ void ShuffleDirections(int directions[4])
 
 void GenerateMaze(void)
 {
+    bool lockedExitRound = IsLockedExitRound();
+
     FillGridWithWalls();
 
     int stackX[GRID_WIDTH * GRID_HEIGTH];
@@ -403,7 +465,86 @@ void GenerateMaze(void)
         }
     }
 
-    grid[1][GRID_WIDTH - 2] = CELL_EXIT;
+    if (!inTutorialSequence && officialRound >= 15)
+    {
+        int exitX = GRID_WIDTH - 2;
+        int exitY = 1;
+        int bestDistance = -1;
+
+        for (int attempt = 0; attempt < 80; attempt++)
+        {
+            int x = GetRandomValue(1, GRID_WIDTH - 2);
+            int y = GetRandomValue(1, GRID_HEIGTH - 2);
+
+            if (grid[y][x] != CELL_PATH || (x == 1 && y == 1))
+            {
+                continue;
+            }
+
+            int distance = abs(x - 1) + abs(y - 1);
+            if (distance > bestDistance)
+            {
+                bestDistance = distance;
+                exitX = x;
+                exitY = y;
+            }
+        }
+
+        grid[exitY][exitX] = lockedExitRound ? CELL_LOCKED_EXIT : CELL_EXIT;
+        lockedExitCellX = exitX;
+        lockedExitCellY = exitY;
+    }
+    else
+    {
+        grid[1][GRID_WIDTH - 2] = lockedExitRound ? CELL_LOCKED_EXIT : CELL_EXIT;
+        lockedExitCellX = GRID_WIDTH - 2;
+        lockedExitCellY = 1;
+    }
+}
+
+void PlacePickupCell(int cellType, int amount)
+{
+    for (int placed = 0; placed < amount; placed++)
+    {
+        for (int attempt = 0; attempt < 90; attempt++)
+        {
+            int x = GetRandomValue(1, GRID_WIDTH - 2);
+            int y = GetRandomValue(1, GRID_HEIGTH - 2);
+
+            if (grid[y][x] == CELL_PATH && !IsCellOccupiedByEnemy(x, y) && (abs(x - 1) + abs(y - 1)) > 8)
+            {
+                grid[y][x] = cellType;
+                break;
+            }
+        }
+    }
+}
+
+void PlaceRoundPickups(bool flashlightEnabled)
+{
+    if (inTutorialSequence)
+    {
+        return;
+    }
+
+    PlacePickupCell(CELL_COIN, 2 + (officialRound >= 4 ? 1 : 0));
+    PlacePickupCell(CELL_AMMO_PICKUP, 1 + (officialRound >= 8 ? 1 : 0));
+    PlacePickupCell(CELL_HEALTH_PICKUP, officialRound >= 3 ? 1 : 0);
+
+    if (IsLockedExitRound())
+    {
+        PlacePickupCell(CELL_KEY, 1);
+    }
+
+    if (officialRound >= 7)
+    {
+        PlacePickupCell(CELL_RELIC, 1);
+    }
+
+    if (flashlightEnabled)
+    {
+        PlacePickupCell(CELL_BATTERY_PICKUP, 1);
+    }
 }
 
 typedef struct Player
@@ -453,7 +594,9 @@ bool playerAlive = true;
 Sound playerShotSound;
 Sound enemyShotSound;
 Sound playerReloadSound;
-Sound playerMoveSound;
+Sound playerHitSound;
+Sound flashlightToggleSound;
+Sound lightningSound;
 Sound victorySound;
 Sound gameOverSound;
 bool gameAudioLoaded = false;
@@ -464,12 +607,10 @@ bool uiLatinFontLoaded = false;
 Color currentDrawColor = WHITE;
 
 Player player;
-Vector2 lastPlayerMoveDirection = { 0 };
-bool hasLastPlayerMoveDirection = false;
-
 typedef enum GamePhase
 {
     PHASE_INTRO,
+    PHASE_SHOP,
     PHASE_INFO,
     PHASE_PLAYING
 } GamePhase;
@@ -525,6 +666,16 @@ typedef enum TextId
     TEXT_RELOAD_IN_PROGRESS,
     TEXT_STAGE_COMPLETE,
     TEXT_NEXT_ROUND,
+    TEXT_SHOP_TITLE,
+    TEXT_SHOP_COINS,
+    TEXT_SHOP_BUY_AMMO,
+    TEXT_SHOP_BUY_BATTERY,
+    TEXT_SHOP_BUY_HEALTH,
+    TEXT_SHOP_BUY_LIGHTNING,
+    TEXT_SHOP_START,
+    TEXT_SHOP_MAX,
+    TEXT_SHOP_LOCKED,
+    TEXT_HUD_LIGHTNING,
     TEXT_COUNT
 } TextId;
 
@@ -547,6 +698,11 @@ bool roundNeedsSetup = true;
 bool waitingForVictorySound = false;
 bool playerStartAuraVisible = true;
 
+int GetCurrentPlayerMaxHealth(void)
+{
+    return inTutorialSequence ? PLAYER_MAX_HEALTH : playerMaxHealth;
+}
+
 void SpawnBullet(Vector2 position, Vector2 direction, float speed, bool fromPlayer);
 void SpawnBossBullet(Vector2 position, Vector2 direction);
 int GetDifficultyRampLevel(void);
@@ -556,6 +712,7 @@ float GetEnemySpeedBonus(void);
 float GetBossSpeedBonus(void);
 float GetBossShootCooldown(void);
 float GetBossFarSpeedMultiplier(void);
+bool IsCellOccupiedByEnemy(int cellX, int cellY);
 void InitGameAudio(void);
 Sound CreateSynthSound(int soundType);
 void UpdateGameAudio(void);
@@ -628,7 +785,17 @@ const char *uiText[LANGUAGE_COUNT][TEXT_COUNT] = {
         [TEXT_HUD_LANTERNA] = "LANTERNA",
         [TEXT_RELOAD_IN_PROGRESS] = "Recarregando",
         [TEXT_STAGE_COMPLETE] = "%s %d completo!",
-        [TEXT_NEXT_ROUND] = "Proximo round"
+        [TEXT_NEXT_ROUND] = "Proximo round",
+        [TEXT_SHOP_TITLE] = "LOJA",
+        [TEXT_SHOP_COINS] = "%d MOEDAS",
+        [TEXT_SHOP_BUY_AMMO] = "MUNICAO",
+        [TEXT_SHOP_BUY_BATTERY] = "BATERIA",
+        [TEXT_SHOP_BUY_HEALTH] = "VIDA",
+        [TEXT_SHOP_BUY_LIGHTNING] = "RAIO",
+        [TEXT_SHOP_START] = "VOLTAR AO JOGO",
+        [TEXT_SHOP_MAX] = "MAX",
+        [TEXT_SHOP_LOCKED] = "Round 11",
+        [TEXT_HUD_LIGHTNING] = "RAIO"
     },
     [LANGUAGE_ES] = {
         [TEXT_LANGUAGE_NAME] = "ES",
@@ -670,7 +837,17 @@ const char *uiText[LANGUAGE_COUNT][TEXT_COUNT] = {
         [TEXT_HUD_LANTERNA] = "LINTERNA",
         [TEXT_RELOAD_IN_PROGRESS] = "Recargando",
         [TEXT_STAGE_COMPLETE] = "%s %d completado!",
-        [TEXT_NEXT_ROUND] = "Siguiente ronda"
+        [TEXT_NEXT_ROUND] = "Siguiente ronda",
+        [TEXT_SHOP_TITLE] = "TIENDA",
+        [TEXT_SHOP_COINS] = "%d MONEDAS",
+        [TEXT_SHOP_BUY_AMMO] = "MUNICION",
+        [TEXT_SHOP_BUY_BATTERY] = "BATERIA",
+        [TEXT_SHOP_BUY_HEALTH] = "VIDA",
+        [TEXT_SHOP_BUY_LIGHTNING] = "RAYO",
+        [TEXT_SHOP_START] = "VOLVER AL JUEGO",
+        [TEXT_SHOP_MAX] = "MAX",
+        [TEXT_SHOP_LOCKED] = "Ronda 11",
+        [TEXT_HUD_LIGHTNING] = "RAYO"
     },
     [LANGUAGE_EN] = {
         [TEXT_LANGUAGE_NAME] = "EN",
@@ -712,7 +889,17 @@ const char *uiText[LANGUAGE_COUNT][TEXT_COUNT] = {
         [TEXT_HUD_LANTERNA] = "FLASHLIGHT",
         [TEXT_RELOAD_IN_PROGRESS] = "Reloading",
         [TEXT_STAGE_COMPLETE] = "%s %d complete!",
-        [TEXT_NEXT_ROUND] = "Next round"
+        [TEXT_NEXT_ROUND] = "Next round",
+        [TEXT_SHOP_TITLE] = "SHOP",
+        [TEXT_SHOP_COINS] = "%d COINS",
+        [TEXT_SHOP_BUY_AMMO] = "AMMO",
+        [TEXT_SHOP_BUY_BATTERY] = "BATTERY",
+        [TEXT_SHOP_BUY_HEALTH] = "HEALTH",
+        [TEXT_SHOP_BUY_LIGHTNING] = "LIGHTNING",
+        [TEXT_SHOP_START] = "BACK TO GAME",
+        [TEXT_SHOP_MAX] = "MAX",
+        [TEXT_SHOP_LOCKED] = "Round 11",
+        [TEXT_HUD_LIGHTNING] = "LIGHTNING"
     },
     [LANGUAGE_KO] = {
         [TEXT_LANGUAGE_NAME] = "KO",
@@ -754,7 +941,17 @@ const char *uiText[LANGUAGE_COUNT][TEXT_COUNT] = {
         [TEXT_HUD_LANTERNA] = "손전등",
         [TEXT_RELOAD_IN_PROGRESS] = "재장전 중",
         [TEXT_STAGE_COMPLETE] = "%s %d 완료!",
-        [TEXT_NEXT_ROUND] = "다음 라운드"
+        [TEXT_NEXT_ROUND] = "다음 라운드",
+        [TEXT_SHOP_TITLE] = "상점",
+        [TEXT_SHOP_COINS] = "코인: %d",
+        [TEXT_SHOP_BUY_AMMO] = "탄약",
+        [TEXT_SHOP_BUY_BATTERY] = "배터리 100%",
+        [TEXT_SHOP_BUY_HEALTH] = "최대 체력 +5",
+        [TEXT_SHOP_BUY_LIGHTNING] = "번개 +1",
+        [TEXT_SHOP_START] = "라운드 시작",
+        [TEXT_SHOP_MAX] = "최대",
+        [TEXT_SHOP_LOCKED] = "라운드 11",
+        [TEXT_HUD_LIGHTNING] = "번개"
     }
 };
 
@@ -1191,12 +1388,12 @@ TriangleHitbox GetPlayerTriangleHitbox(Vector2 position)
 
 int GetDifficultyRampLevel(void)
 {
-    if (inTutorialSequence || officialRound < 15)
+    if (inTutorialSequence || officialRound < 11)
     {
         return 0;
     }
 
-    return officialRound - 14;
+    return officialRound - 10;
 }
 
 float GetRedEnemyTrackDistance(void)
@@ -1244,6 +1441,11 @@ Vector2 GetFlashlightCenter(void)
 
 bool IsWorldPositionVisible(Vector2 position)
 {
+    if (lightningRevealTimer > 0.0f)
+    {
+        return true;
+    }
+
     if (!currentRoundConfig.flashlightEnabled)
     {
         return true;
@@ -1724,6 +1926,14 @@ void DrawMazeGrid(void)
             {
                 cellColor = MAZE_EXIT_COLOR;
             }
+            else if (grid[y][x] == CELL_LOCKED_EXIT)
+            {
+                cellColor = (Color){ 82, 56, 18, 255 };
+            }
+            else if (grid[y][x] == CELL_COIN || grid[y][x] == CELL_AMMO_PICKUP || grid[y][x] == CELL_BATTERY_PICKUP || grid[y][x] == CELL_KEY || grid[y][x] == CELL_RELIC || grid[y][x] == CELL_HEALTH_PICKUP)
+            {
+                cellColor = MAZE_PATH_COLOR;
+            }
 
             if (!IsWorldPositionVisible(cellCenter))
             {
@@ -1742,6 +1952,63 @@ void DrawMazeGrid(void)
             {
                 DrawRectangleLinesEx((Rectangle){ position.x, position.y, size.x, size.y }, fmaxf(2.0f, 2.0f * layout.drawScale), RAYWHITE);
             }
+            else if (grid[y][x] == CELL_LOCKED_EXIT && IsWorldPositionVisible(cellCenter))
+            {
+                DrawRectangleLinesEx((Rectangle){ position.x, position.y, size.x, size.y }, fmaxf(2.0f, 2.0f * layout.drawScale), GOLD);
+                DrawLineEx((Vector2){ position.x + size.x * 0.25f, position.y + size.y * 0.25f },
+                           (Vector2){ position.x + size.x * 0.75f, position.y + size.y * 0.75f }, fmaxf(2.0f, 2.0f * layout.drawScale), GOLD);
+                DrawLineEx((Vector2){ position.x + size.x * 0.75f, position.y + size.y * 0.25f },
+                           (Vector2){ position.x + size.x * 0.25f, position.y + size.y * 0.75f }, fmaxf(2.0f, 2.0f * layout.drawScale), GOLD);
+            }
+
+            if (IsWorldPositionVisible(cellCenter))
+            {
+                Vector2 pickupCenter = { position.x + size.x * 0.5f, position.y + size.y * 0.5f };
+                float pickupRadius = fmaxf(3.0f, 4.5f * layout.drawScale);
+
+                if (grid[y][x] == CELL_COIN)
+                {
+                    DrawCircleV(pickupCenter, pickupRadius * 1.7f, Fade(GOLD, 0.25f));
+                    DrawCircleLines((int)pickupCenter.x, (int)pickupCenter.y, pickupRadius, GOLD);
+                    DrawCircleV(pickupCenter, pickupRadius * 0.35f, GOLD);
+                }
+                else if (grid[y][x] == CELL_AMMO_PICKUP)
+                {
+                    DrawRectangleRounded((Rectangle){ pickupCenter.x - pickupRadius * 1.4f, pickupCenter.y - pickupRadius, pickupRadius * 2.8f, pickupRadius * 2.0f }, 0.18f, 5, Fade(HUD_BORDER_COLOR, 0.35f));
+                    DrawRectangleRoundedLinesEx((Rectangle){ pickupCenter.x - pickupRadius * 1.4f, pickupCenter.y - pickupRadius, pickupRadius * 2.8f, pickupRadius * 2.0f }, 0.18f, 5, 1.5f, HUD_BORDER_COLOR);
+                    DrawLineEx((Vector2){ pickupCenter.x - pickupRadius * 0.8f, pickupCenter.y }, (Vector2){ pickupCenter.x + pickupRadius * 0.8f, pickupCenter.y }, 2.0f, RAYWHITE);
+                }
+                else if (grid[y][x] == CELL_BATTERY_PICKUP)
+                {
+                    DrawRectangleRoundedLinesEx((Rectangle){ pickupCenter.x - pickupRadius * 1.2f, pickupCenter.y - pickupRadius * 0.7f, pickupRadius * 2.0f, pickupRadius * 1.4f }, 0.2f, 5, 1.5f, GOLD);
+                    DrawRectangleRec((Rectangle){ pickupCenter.x + pickupRadius * 0.95f, pickupCenter.y - pickupRadius * 0.25f, pickupRadius * 0.3f, pickupRadius * 0.5f }, GOLD);
+                }
+                else if (grid[y][x] == CELL_KEY)
+                {
+                    DrawCircleV((Vector2){ pickupCenter.x - pickupRadius * 0.55f, pickupCenter.y }, pickupRadius * 0.75f, Fade(GOLD, 0.25f));
+                    DrawCircleLines((int)(pickupCenter.x - pickupRadius * 0.55f), (int)pickupCenter.y, pickupRadius * 0.7f, GOLD);
+                    DrawLineEx((Vector2){ pickupCenter.x, pickupCenter.y }, (Vector2){ pickupCenter.x + pickupRadius * 1.25f, pickupCenter.y }, 2.0f, GOLD);
+                    DrawLineEx((Vector2){ pickupCenter.x + pickupRadius * 0.72f, pickupCenter.y }, (Vector2){ pickupCenter.x + pickupRadius * 0.72f, pickupCenter.y + pickupRadius * 0.55f }, 2.0f, GOLD);
+                    DrawLineEx((Vector2){ pickupCenter.x + pickupRadius * 1.08f, pickupCenter.y }, (Vector2){ pickupCenter.x + pickupRadius * 1.08f, pickupCenter.y + pickupRadius * 0.45f }, 2.0f, GOLD);
+                }
+                else if (grid[y][x] == CELL_RELIC)
+                {
+                    float pulse = 0.65f + 0.35f * sinf((float)GetTime() * 6.0f);
+                    Color relicColor = (Color){ 120, 230, 255, 255 };
+                    DrawCircleV(pickupCenter, pickupRadius * (2.0f + pulse), Fade(relicColor, 0.18f));
+                    DrawPoly(pickupCenter, 6, pickupRadius * 1.35f, 30.0f, Fade(relicColor, 0.55f));
+                    DrawPolyLines(pickupCenter, 6, pickupRadius * 1.45f, 30.0f, relicColor);
+                    DrawCircleV(pickupCenter, pickupRadius * 0.35f, RAYWHITE);
+                }
+                else if (grid[y][x] == CELL_HEALTH_PICKUP)
+                {
+                    Color healthColor = (Color){ 190, 70, 255, 255 };
+                    DrawCircleV(pickupCenter, pickupRadius * 1.8f, Fade(healthColor, 0.18f));
+                    DrawRectangleRounded((Rectangle){ pickupCenter.x - pickupRadius * 0.35f, pickupCenter.y - pickupRadius * 1.25f, pickupRadius * 0.7f, pickupRadius * 2.5f }, 0.2f, 5, healthColor);
+                    DrawRectangleRounded((Rectangle){ pickupCenter.x - pickupRadius * 1.25f, pickupCenter.y - pickupRadius * 0.35f, pickupRadius * 2.5f, pickupRadius * 0.7f }, 0.2f, 5, healthColor);
+                    DrawRectangleLinesEx((Rectangle){ pickupCenter.x - pickupRadius * 1.25f, pickupCenter.y - pickupRadius * 1.25f, pickupRadius * 2.5f, pickupRadius * 2.5f }, 1.0f, Fade(RAYWHITE, 0.65f));
+                }
+            }
         }
     }
 }
@@ -1753,7 +2020,7 @@ bool IsWallCell(int x, int y)
         return true;
     }
 
-    return grid[y][x] == CELL_WALL;
+    return grid[y][x] == CELL_WALL || grid[y][x] == CELL_LOCKED_EXIT;
 }
 
 /* True circle-vs-tile overlap test: finds the closest point of the wall
@@ -1952,6 +2219,7 @@ void MovePlayerCollisionStep(Vector2 stepDelta)
 
 void MovePlayerWithCollision(Vector2 direction, float distance)
 {
+    Vector2 startPosition = player.position;
     Vector2 totalDelta = {
         direction.x * distance,
         direction.y * distance
@@ -1973,6 +2241,23 @@ void MovePlayerWithCollision(Vector2 direction, float distance)
     {
         MovePlayerCollisionStep(stepDelta);
     }
+
+    Vector2 actualDelta = {
+        player.position.x - startPosition.x,
+        player.position.y - startPosition.y
+    };
+    float actualDistance = sqrtf((actualDelta.x * actualDelta.x) + (actualDelta.y * actualDelta.y));
+
+    if (actualDistance > distance && actualDistance > 0.0001f)
+    {
+        float clampScale = distance / actualDistance;
+        Vector2 clampedPosition = {
+            startPosition.x + actualDelta.x * clampScale,
+            startPosition.y + actualDelta.y * clampScale
+        };
+
+        TryMovePlayerTo(clampedPosition);
+    }
 }
 
 void InitPlayer(void)
@@ -1982,8 +2267,6 @@ void InitPlayer(void)
     player.facingAngle = 0.0f;
     player.position.x = TILE_SIZE * 1.5f;
     player.position.y = TILE_SIZE * 1.5f;
-    lastPlayerMoveDirection = (Vector2){ 0 };
-    hasLastPlayerMoveDirection = false;
     playerStartAuraVisible = true;
 }
 
@@ -1999,7 +2282,6 @@ void UpdatePlayer(void)
     if (movement.x != 0.0f || movement.y != 0.0f)
     {
         playerStartAuraVisible = false;
-        Vector2 previousPosition = player.position;
 
         float length = sqrtf(movement.x * movement.x + movement.y * movement.y);
         movement.x /= length;
@@ -2007,22 +2289,154 @@ void UpdatePlayer(void)
         player.facingAngle = atan2f(movement.y, movement.x);
 
         MovePlayerWithCollision(movement, player.speed * GetStableFrameTime());
+    }
+}
 
-        bool playerMoved = fabsf(player.position.x - previousPosition.x) > 0.01f ||
-                           fabsf(player.position.y - previousPosition.y) > 0.01f;
+void SpawnFloatingNotice(Vector2 position, const char *text, Color color)
+{
+    int slot = 0;
 
-        if (playerMoved)
+    for (int i = 0; i < MAX_FLOATING_NOTICES; i++)
+    {
+        if (floatingNotices[i].timer <= 0.0f)
         {
-            float directionDot = (movement.x * lastPlayerMoveDirection.x) +
-                                 (movement.y * lastPlayerMoveDirection.y);
+            slot = i;
+            break;
+        }
+    }
 
-            if (gameAudioLoaded && hasLastPlayerMoveDirection && directionDot < 0.99f)
+    floatingNotices[slot].position = position;
+    snprintf(floatingNotices[slot].text, sizeof(floatingNotices[slot].text), "%s", text);
+    floatingNotices[slot].color = color;
+    floatingNotices[slot].timer = FLOATING_NOTICE_TIME;
+}
+
+void UpdateFloatingNotices(void)
+{
+    for (int i = 0; i < MAX_FLOATING_NOTICES; i++)
+    {
+        if (floatingNotices[i].timer > 0.0f)
+        {
+            floatingNotices[i].timer -= GetStableFrameTime();
+            floatingNotices[i].position.y -= 18.0f * GetStableFrameTime();
+
+            if (floatingNotices[i].timer < 0.0f)
             {
-                PlaySound(playerMoveSound);
+                floatingNotices[i].timer = 0.0f;
             }
+        }
+    }
+}
 
-            lastPlayerMoveDirection = movement;
-            hasLastPlayerMoveDirection = true;
+void OpenLockedExit(void)
+{
+    hasExitKey = true;
+    SpawnFloatingNotice(player.position, "SAIDA ABERTA", MAZE_EXIT_COLOR);
+
+    if (lockedExitCellX >= 0 && lockedExitCellY >= 0 && grid[lockedExitCellY][lockedExitCellX] == CELL_LOCKED_EXIT)
+    {
+        grid[lockedExitCellY][lockedExitCellX] = CELL_EXIT;
+        return;
+    }
+
+    for (int y = 0; y < GRID_HEIGTH; y++)
+    {
+        for (int x = 0; x < GRID_WIDTH; x++)
+        {
+            if (grid[y][x] == CELL_LOCKED_EXIT)
+            {
+                grid[y][x] = CELL_EXIT;
+                lockedExitCellX = x;
+                lockedExitCellY = y;
+                return;
+            }
+        }
+    }
+}
+
+void CollectCurrentCellPickup(void)
+{
+    int cellX = (int)(player.position.x / TILE_SIZE);
+    int cellY = (int)(player.position.y / TILE_SIZE);
+    int cell = grid[cellY][cellX];
+
+    if (cell == CELL_COIN)
+    {
+        roundPickupsCollected++;
+        playerCoins += PICKUP_COIN_VALUE;
+        SpawnFloatingNotice(GetCellCenter(cellX, cellY), TextFormat("+%d MOEDAS", PICKUP_COIN_VALUE), GOLD);
+        grid[cellY][cellX] = CELL_PATH;
+    }
+    else if (cell == CELL_AMMO_PICKUP)
+    {
+        roundPickupsCollected++;
+        playerTotalAmmo += PICKUP_AMMO_VALUE;
+        if (playerTotalAmmo > playerMaxAmmo)
+        {
+            playerTotalAmmo = playerMaxAmmo;
+        }
+        SpawnFloatingNotice(GetCellCenter(cellX, cellY), TextFormat("+%d MUNICAO", PICKUP_AMMO_VALUE), HUD_BORDER_COLOR);
+        grid[cellY][cellX] = CELL_PATH;
+    }
+    else if (cell == CELL_BATTERY_PICKUP)
+    {
+        roundPickupsCollected++;
+        flashlightBattery += PICKUP_BATTERY_VALUE;
+        if (flashlightBattery > FLASHLIGHT_MAX_BATTERY)
+        {
+            flashlightBattery = FLASHLIGHT_MAX_BATTERY;
+        }
+        SpawnFloatingNotice(GetCellCenter(cellX, cellY), "+15 BATERIA", GOLD);
+        grid[cellY][cellX] = CELL_PATH;
+    }
+    else if (cell == CELL_KEY)
+    {
+        roundPickupsCollected++;
+        OpenLockedExit();
+        grid[cellY][cellX] = CELL_PATH;
+    }
+    else if (cell == CELL_RELIC)
+    {
+        roundPickupsCollected++;
+        playerCoins += PICKUP_RELIC_COINS;
+        lightningCharges++;
+        SpawnFloatingNotice(GetCellCenter(cellX, cellY), "RELIQUIA +RAIO", (Color){ 120, 230, 255, 255 });
+        grid[cellY][cellX] = CELL_PATH;
+    }
+    else if (cell == CELL_HEALTH_PICKUP)
+    {
+        roundPickupsCollected++;
+        int maxHealth = GetCurrentPlayerMaxHealth();
+        playerHealth += PICKUP_HEALTH_VALUE;
+        if (playerHealth > maxHealth)
+        {
+            playerHealth = maxHealth;
+        }
+        SpawnFloatingNotice(GetCellCenter(cellX, cellY), "+15 VIDA", (Color){ 190, 70, 255, 255 });
+        grid[cellY][cellX] = CELL_PATH;
+    }
+}
+
+void DrainFlashlightBatteryPerSecond(void)
+{
+    if (!flashlightOn)
+    {
+        flashlightDrainTimer = 0.0f;
+        return;
+    }
+
+    flashlightDrainTimer += GetStableFrameTime();
+
+    while (flashlightDrainTimer >= FLASHLIGHT_DRAIN_INTERVAL && flashlightOn)
+    {
+        flashlightDrainTimer -= FLASHLIGHT_DRAIN_INTERVAL;
+        flashlightBattery -= FLASHLIGHT_DRAIN_AMOUNT;
+
+        if (flashlightBattery <= 0.0f)
+        {
+            flashlightBattery = 0.0f;
+            flashlightOn = false;
+            flashlightDrainTimer = 0.0f;
         }
     }
 }
@@ -2032,6 +2446,7 @@ void UpdateFlashlight(void)
     if (!currentRoundConfig.flashlightEnabled)
     {
         flashlightOn = false;
+        flashlightDrainTimer = 0.0f;
         return;
     }
 
@@ -2044,18 +2459,60 @@ void UpdateFlashlight(void)
         else if (flashlightBattery > 0.0f)
         {
             flashlightOn = true;
+            if (gameAudioLoaded)
+            {
+                PlaySound(flashlightToggleSound);
+            }
         }
     }
 
-    if (flashlightOn)
-    {
-        flashlightBattery -= 2.0f * GetStableFrameTime();
+    DrainFlashlightBatteryPerSecond();
+}
 
-        if (flashlightBattery <= 0.0f)
+bool IsLightningAvailableThisRound(void)
+{
+    return !inTutorialSequence && officialRound >= 11;
+}
+
+void TriggerLightningReveal(void)
+{
+    lightningRevealTimer = LIGHTNING_REVEAL_TIME;
+
+    if (gameAudioLoaded)
+    {
+        PlaySound(lightningSound);
+    }
+}
+
+void UpdateLightningReveal(void)
+{
+    if (lightningRevealTimer > 0.0f)
+    {
+        lightningRevealTimer -= GetStableFrameTime();
+        if (lightningRevealTimer < 0.0f)
         {
-            flashlightBattery = 0.0f;
-            flashlightOn = false;
+            lightningRevealTimer = 0.0f;
         }
+    }
+
+    if (!IsLightningAvailableThisRound())
+    {
+        lightningAutoTimer = 0.0f;
+        return;
+    }
+
+    lightningAutoTimer += GetStableFrameTime();
+    if (lightningAutoTimer >= LIGHTNING_REVEAL_INTERVAL)
+    {
+        lightningAutoTimer = 0.0f;
+        TriggerLightningReveal();
+    }
+
+    if (IsKeyPressed(KEY_F) && lightningCharges > 0)
+    {
+        lightningCharges--;
+        lightningAutoTimer = 0.0f;
+        TriggerLightningReveal();
     }
 }
 
@@ -2063,7 +2520,7 @@ void UpdatePlayerShooting(void)
 {
     if (IsKeyPressed(KEY_SPACE))
     {
-        if (playerAmmo <= 0 || playerReloadTimer > 0.0f)
+        if (playerAmmo <= 0 || playerTotalAmmo <= 0 || playerReloadTimer > 0.0f)
         {
             return;
         }
@@ -2074,6 +2531,8 @@ void UpdatePlayerShooting(void)
         shotOrigin.y += shotDirection.y * (player.radius + 8.0f);
         SpawnBullet(shotOrigin, shotDirection, PLAYER_BULLET_SPEED, true);
         playerAmmo--;
+        playerTotalAmmo--;
+        roundShotsFired++;
     }
 }
 
@@ -2085,12 +2544,13 @@ void UpdatePlayerReload(void)
         if (playerReloadTimer <= 0.0f)
         {
             playerReloadTimer = 0.0f;
-            playerAmmo = PLAYER_MAX_AMMO;
+            playerAmmo = (playerTotalAmmo < PLAYER_MAGAZINE_SIZE) ? playerTotalAmmo : PLAYER_MAGAZINE_SIZE;
         }
         return;
     }
 
-    if (IsKeyPressed(KEY_R) && playerAmmo < PLAYER_MAX_AMMO)
+    int loadedLimit = (playerTotalAmmo < PLAYER_MAGAZINE_SIZE) ? playerTotalAmmo : PLAYER_MAGAZINE_SIZE;
+    if (IsKeyPressed(KEY_R) && playerAmmo < loadedLimit)
     {
         playerReloadTimer = PLAYER_RELOAD_TIME;
         if (gameAudioLoaded)
@@ -2106,6 +2566,19 @@ bool DidPlayerReachExit(void)
     int playerCellY = (int)(player.position.y / TILE_SIZE);
 
     return grid[playerCellY][playerCellX] == CELL_EXIT;
+}
+
+void FinishRoundRewards(void)
+{
+    pendingRoundBonus = 0;
+
+    if (!inTutorialSequence)
+    {
+        pendingRoundBonus += roundPickupsCollected * 10;
+        if (!roundTookDamage) pendingRoundBonus += 35;
+        if (roundShotsFired <= 12) pendingRoundBonus += 25;
+        playerCoins += pendingRoundBonus;
+    }
 }
 
 bool IsCellOccupiedByEnemy(int cellX, int cellY)
@@ -2392,7 +2865,7 @@ void InitEnemies(void)
 void InitBossEnemy(void)
 {
     bossEnemy.radius = 10.0f;
-    bossEnemy.speed = 42.0f + GetBossSpeedBonus();
+    bossEnemy.speed = fmaxf(1.0f, player.speed - 3.0f) + GetBossSpeedBonus();
     bossEnemy.active = true;
     bossEnemy.type = ENEMY_BOSS;
     bossEnemy.hitsTaken = 0;
@@ -2449,11 +2922,13 @@ void ApplyRoundConfig(void)
 
     bossEnemy.active = currentRoundConfig.bossEnabled;
     flashlightOn = false;
-    playerAmmo = PLAYER_MAX_AMMO;
+    flashlightDrainTimer = 0.0f;
     playerReloadTimer = 0.0f;
 
     if (inTutorialSequence)
     {
+        playerTotalAmmo = playerMaxAmmo;
+        playerAmmo = PLAYER_MAGAZINE_SIZE;
         flashlightBattery = FLASHLIGHT_MAX_BATTERY;
     }
 
@@ -2466,15 +2941,30 @@ void ApplyRoundConfig(void)
 void SetupRound(void)
 {
     playerAlive = true;
-    playerHealth = PLAYER_MAX_HEALTH;
+    playerHealth = inTutorialSequence ? PLAYER_MAX_HEALTH : playerMaxHealth;
+    playerAmmo = (playerTotalAmmo < PLAYER_MAGAZINE_SIZE) ? playerTotalAmmo : PLAYER_MAGAZINE_SIZE;
+    hasExitKey = false;
+    lockedExitCellX = -1;
+    lockedExitCellY = -1;
+    roundPickupsCollected = 0;
+    roundShotsFired = 0;
+    roundTookDamage = false;
+    pendingRoundBonus = 0;
+    for (int i = 0; i < MAX_FLOATING_NOTICES; i++)
+    {
+        floatingNotices[i].timer = 0.0f;
+    }
     playerDamageCooldown = 0.0f;
     waitingForVictorySound = false;
+    lightningAutoTimer = 0.0f;
+    lightningRevealTimer = 0.0f;
     GenerateMaze();
     InitPlayer();
     InitBullets();
     InitEnemies();
     InitBossEnemy();
     ApplyRoundConfig();
+    PlaceRoundPickups(currentRoundConfig.flashlightEnabled);
     roundNeedsSetup = false;
 }
 
@@ -2537,7 +3027,7 @@ const char *GetRoundInfoBody(void)
         {
             if (tutorialRound == 1) return "Red enemies patrol the maze and chase when close.\nTouching one deals 25 damage, not instant death.\nYou have 100 health and brief invulnerability after damage.\nDo not stand still in corridors; keep moving toward the green exit.";
             if (tutorialRound == 2) return "Pink enemies are shooters.\nIf they line up with you in a clear row or column, they stop and fire.\nUse SPACE to shoot. Five hits knock any enemy out for 5 seconds.\nYour weapon has 15 shots; press R to reload.";
-            if (tutorialRound == 3) return "The flashlight is available.\nPress C to toggle it. It reveals more of the maze but spends battery.\nTutorial rounds always start with 100 percent battery.\nUse it in short bursts to check corners and find the exit.";
+            if (tutorialRound == 3) return "The flashlight is available.\nPress C to toggle it. It reveals more of the maze but spends battery.\nTutorial rounds always start with 50 percent battery.\nUse it in short bursts to check corners and find the exit.";
             return "The purple boss is the square enemy.\nIt pathfinds toward you, shoots when aligned, and speeds up if far away.\nIt can also be knocked out for 5 seconds after five hits.\nThe game limits crowding so more than two enemies should not trap you at once.";
         }
         if (currentLanguage == LANGUAGE_KO)
@@ -2557,31 +3047,35 @@ const char *GetRoundInfoBody(void)
 
         if (tutorialRound == 1) return "Inimigos vermelhos patrulham o labirinto e perseguem de perto.\nEncostar neles causa 25 de dano, nao morte instantanea.\nVoce tem 100 de vida e fica invulneravel por um instante apos dano.\nNao pare nos corredores; avance ate a saida verde.";
         if (tutorialRound == 2) return "Inimigos rosas atiram.\nSe ficarem alinhados com voce em linha reta sem parede, eles param e disparam.\nUse ESPACO para atirar. Cinco acertos nocauteiam qualquer inimigo por 5 segundos.\nSua arma tem 15 balas; pressione R para recarregar.";
-        if (tutorialRound == 3) return "A lanterna foi liberada.\nPressione C para ligar ou desligar. Ela revela mais do labirinto, mas gasta bateria.\nNo tutorial, todo round comeca com 100 por cento de bateria.\nUse em rajadas curtas para checar esquinas e encontrar a saida.";
+            if (tutorialRound == 3) return "A lanterna foi liberada.\nPressione C para ligar ou desligar. Ela revela mais do labirinto, mas gasta bateria.\nNo tutorial, todo round comeca com 50 por cento de bateria.\nUse em rajadas curtas para checar esquinas e encontrar a saida.";
         return "O chefao roxo e o inimigo quadrado.\nEle calcula caminho ate voce, atira quando fica alinhado e acelera se estiver longe.\nEle tambem cai por 5 segundos depois de cinco acertos.\nO jogo limita cercos para mais de dois inimigos nao prenderem voce de uma vez.";
     }
 
     if (currentLanguage == LANGUAGE_EN)
     {
-        if (officialRound == 1) return "Official run starts now.\nRounds 1 and 2 use red patrol enemies and pink shooters.\nYou start with 100 health, 15 shots, and full battery saved for later rounds.\nReach the green exit to advance.";
+        if (officialRound == 1) return "Official run starts now.\nRounds 1 and 2 use red patrol enemies and pink shooters.\nYou start with 100 health, 100 total ammo, and 15 loaded shots.\nReach the green exit to advance.";
         if (officialRound == 3) return "Flashlight rounds begin.\nRounds 3 and 4 include red and pink enemies plus limited visibility.\nYour battery does not refill every round, so spend it carefully.\nIt refills on round 5 and then every 5 rounds.";
-        if (officialRound == 5) return "Round 5 refills the flashlight battery to 100 percent.\nThis round focuses on the purple boss only.\nKeep moving, break alignment when it shoots, and hit it five times to knock it out.";
+        if (officialRound == 4) return "Security doors are now active.\nFind the golden key before the exit opens.\nCoins, ammo, health and battery cells can appear in side paths.";
+        if (officialRound == 5) return "Round 5 refills the flashlight battery to 50 percent.\nThis round focuses on the purple boss only.\nKeep moving, break alignment when it shoots, and hit it five times to knock it out.";
         if (officialRound == 6) return "Rounds 6 and 7 combine the boss with red enemies.\nThe boss hunts directly while red enemies pressure nearby routes.\nUse shots to create space and avoid being boxed in.";
+        if (officialRound == 7) return "Overload relics can now appear.\nThey grant coins and one extra lightning charge.\nRisky side paths can pay for your next shop upgrade.";
         if (officialRound == 8) return "Rounds 8 and 9 add every enemy type except flashlight darkness.\nRed enemies chase, pink enemies shoot, and the boss accelerates from far away.\nWatch the music volume: it rises when danger is close.";
         if (officialRound == 10) return "From round 10 on, everything is active: red, pink, boss, and flashlight.\nThe battery refills only on rounds 10, 15, 20, and so on.\nPlan routes before switching the flashlight off.";
         if (officialRound == 15) return "Difficulty ramp is now active.\nEnemies become faster and use pathfinding more often each round.\nKnockouts, reload timing, and battery control matter more from here.";
-        return "Cross the maze and reach the green exit.\nUse SPACE to shoot, R to reload, and C for flashlight when available.\nStay mobile and use knockouts to open a path.";
+        return "Cross the maze and reach the green exit.\nCollect coins, ammo, health and battery cells when they appear.\nStay mobile and use knockouts to open a path.";
     }
     if (currentLanguage == LANGUAGE_ES)
     {
-        if (officialRound == 1) return "La partida oficial empieza ahora.\nLas rondas 1 y 2 usan enemigos rojos de patrulla y rosas que disparan.\nEmpiezas con 100 de vida, 15 balas y bateria llena guardada para mas adelante.\nLlega a la salida verde para avanzar.";
+        if (officialRound == 1) return "La partida oficial empieza ahora.\nLas rondas 1 y 2 usan enemigos rojos de patrulla y rosas que disparan.\nEmpiezas con 100 de vida, 100 balas totales y 15 cargadas.\nLlega a la salida verde para avanzar.";
         if (officialRound == 3) return "Empiezan las rondas con linterna.\nLas rondas 3 y 4 tienen rojos, rosas y vision limitada.\nLa bateria no se recarga cada ronda; usala con cuidado.\nSe recarga en la ronda 5 y luego cada 5 rondas.";
-        if (officialRound == 5) return "La ronda 5 recarga la bateria de la linterna al 100 por ciento.\nEsta ronda se centra solo en el jefe morado.\nSigue moviendote, rompe la alineacion cuando dispare y acierta cinco veces para dejarlo K.O.";
+        if (officialRound == 4) return "Las puertas de seguridad estan activas.\nEncuentra la llave dorada antes de abrir la salida.\nHay monedas, municion, vida y bateria en rutas laterales.";
+        if (officialRound == 5) return "La ronda 5 recarga la bateria de la linterna al 50 por ciento.\nEsta ronda se centra solo en el jefe morado.\nSigue moviendote, rompe la alineacion cuando dispare y acierta cinco veces para dejarlo K.O.";
         if (officialRound == 6) return "Las rondas 6 y 7 combinan al jefe con enemigos rojos.\nEl jefe te persigue directo mientras los rojos presionan las rutas cercanas.\nUsa disparos para abrir espacio y evita quedar acorralado.";
+        if (officialRound == 7) return "Pueden aparecer reliquias de sobrecarga.\nDan monedas y una carga extra de rayo.\nLas rutas peligrosas pueden pagar tu proxima mejora.";
         if (officialRound == 8) return "Las rondas 8 y 9 suman todos los tipos de enemigo menos la oscuridad de la linterna.\nLos rojos persiguen, los rosas disparan y el jefe acelera cuando esta lejos.\nPresta atencion a la musica: sube cuando el peligro esta cerca.";
         if (officialRound == 10) return "Desde la ronda 10, todo esta activo: rojo, rosa, jefe y linterna.\nLa bateria solo se recarga en las rondas 10, 15, 20 y asi sucesivamente.\nPlanea la ruta antes de apagar la linterna.";
         if (officialRound == 15) return "La dificultad creciente ya esta activa.\nLos enemigos se vuelven mas rapidos y calculan camino con mas frecuencia cada ronda.\nEl K.O., el tiempo de recarga y la gestion de bateria importan mas desde aqui.";
-        return "Cruza el laberinto y llega a la salida verde.\nUsa ESPACIO para disparar, R para recargar y C para la linterna cuando este disponible.\nMantente en movimiento y usa los K.O. para abrir camino.";
+        return "Cruza el laberinto y llega a la salida verde.\nRecoge monedas, municion, vida y bateria cuando aparezcan.\nMantente en movimiento y usa los K.O. para abrir camino.";
     }
     if (currentLanguage == LANGUAGE_KO)
     {
@@ -2595,14 +3089,16 @@ const char *GetRoundInfoBody(void)
         return "미로를 지나 초록 출구에 도착하세요.\n스페이스로 발사, R로 재장전, 가능할 때 C로 손전등을 켭니다.\n계속 움직이고 기절 시간을 이용해 길을 여세요.";
     }
 
-    if (officialRound == 1) return "A partida oficial comeca agora.\nRounds 1 e 2 usam inimigos vermelhos de patrulha e rosas atiradores.\nVoce inicia com 100 de vida, 15 balas e bateria cheia guardada para os proximos rounds.\nChegue na saida verde para avancar.";
+    if (officialRound == 1) return "A partida oficial comeca agora.\nRounds 1 e 2 usam inimigos vermelhos de patrulha e rosas atiradores.\nVoce inicia com 100 de vida, 100 municoes totais e 15 na arma.\nChegue na saida verde para avancar.";
     if (officialRound == 3) return "Comecam os rounds com lanterna.\nRounds 3 e 4 tem vermelhos, rosas e visao limitada.\nA bateria nao recarrega todo round; use com cuidado.\nEla volta no round 5 e depois a cada 5 rounds.";
-    if (officialRound == 5) return "No round 5 a bateria da lanterna volta para 100 por cento.\nEste round foca apenas no chefao roxo.\nContinue se movendo, quebre o alinhamento quando ele atirar e acerte cinco tiros para nocautea-lo.";
+    if (officialRound == 4) return "Portas de seguranca foram ativadas.\nAche a chave dourada antes de abrir a saida.\nMoedas, municao, vida e bateria podem aparecer em rotas laterais.";
+    if (officialRound == 5) return "No round 5 a bateria da lanterna volta para 50 por cento.\nEste round foca apenas no chefao roxo.\nContinue se movendo, quebre o alinhamento quando ele atirar e acerte cinco tiros para nocautea-lo.";
     if (officialRound == 6) return "Rounds 6 e 7 juntam chefao e inimigos vermelhos.\nO chefao persegue direto, enquanto os vermelhos pressionam rotas proximas.\nUse tiros para abrir espaco e evitar ficar preso.";
     if (officialRound == 8) return "Rounds 8 e 9 trazem todos os tipos de inimigo, mas sem escuridao da lanterna.\nVermelhos perseguem, rosas atiram e o chefao acelera quando esta longe.\nObserve a musica: ela aumenta quando o perigo esta perto.";
     if (officialRound == 10) return "Do round 10 em diante, tudo fica ativo: vermelho, rosa, chefao e lanterna.\nA bateria so recarrega nos rounds 10, 15, 20 e assim por diante.\nPlaneje o caminho antes de desligar a lanterna.";
     if (officialRound == 15) return "A dificuldade crescente esta ativa.\nOs inimigos ficam mais rapidos e usam caminho inteligente com mais frequencia a cada round.\nNocaute, recarga e controle da bateria passam a ser essenciais.";
-    return "Atravesse o labirinto e alcance a saida verde.\nUse ESPACO para atirar, R para recarregar e C para lanterna quando disponivel.\nMantenha movimento e use nocautes para abrir caminho.";
+    if (officialRound == 7) return "Reliquias de sobrecarga podem aparecer.\nElas dao moedas e uma carga extra de raio.\nRotas perigosas podem pagar seu proximo upgrade da loja.";
+    return "Atravesse o labirinto e alcance a saida verde.\nColete moedas, municao, vida e bateria quando aparecerem.\nMantenha movimento e use nocautes para abrir caminho.";
 }
 
 bool ShouldShowRoundInfo(void)
@@ -2612,8 +3108,8 @@ bool ShouldShowRoundInfo(void)
         return true;
     }
 
-    return officialRound == 1 || officialRound == 3 || officialRound == 5 ||
-           officialRound == 6 || officialRound == 8 || officialRound == 10 ||
+    return officialRound == 1 || officialRound == 3 || officialRound == 4 || officialRound == 5 ||
+           officialRound == 6 || officialRound == 7 || officialRound == 8 || officialRound == 10 ||
            officialRound == 15;
 }
 
@@ -2621,7 +3117,19 @@ void StartCurrentStage(void)
 {
     waitingForVictorySound = false;
     roundNeedsSetup = true;
-    gamePhase = ShouldShowRoundInfo() ? PHASE_INFO : PHASE_PLAYING;
+    gamePhase = (inTutorialSequence || officialRound == 1) ? PHASE_INFO : PHASE_SHOP;
+}
+
+void ResetOfficialRunStats(void)
+{
+    playerCoins = SHOP_START_COINS;
+    playerMaxHealth = PLAYER_START_HEALTH;
+    playerHealth = playerMaxHealth;
+    playerMaxAmmo = PLAYER_MAX_AMMO;
+    playerTotalAmmo = playerMaxAmmo;
+    playerAmmo = PLAYER_MAGAZINE_SIZE;
+    flashlightBattery = FLASHLIGHT_MAX_BATTERY;
+    lightningCharges = 0;
 }
 
 void AdvanceToNextStage(void)
@@ -2639,10 +3147,12 @@ void AdvanceToNextStage(void)
         inTutorialSequence = false;
         officialRound = 1;
         bestOfficialRound = 1;
+        ResetOfficialRunStats();
         StartCurrentStage();
         return;
     }
 
+    playerCoins += SHOP_ROUND_REWARD;
     officialRound++;
     if (officialRound > bestOfficialRound)
     {
@@ -3345,8 +3855,11 @@ Sound CreateSynthSound(int soundType)
 {
     float duration = 0.14f;
     if (soundType == 2) duration = 0.28f;
-    if (soundType == 4) duration = 1.7f;
+    if (soundType == 4) duration = 0.72f;
     if (soundType == 5) duration = 0.8f;
+    if (soundType == 6) duration = 0.18f;
+    if (soundType == 7) duration = 0.12f;
+    if (soundType == 8) duration = 0.55f;
 
     int sampleCount = (int)((float)AUDIO_SAMPLE_RATE * duration);
     int16_t *samples = (int16_t *)malloc((size_t)sampleCount * sizeof(int16_t));
@@ -3380,15 +3893,31 @@ Sound CreateSynthSound(int soundType)
             float step = (p < 0.33f) ? 520.0f : ((p < 0.66f) ? 700.0f : 880.0f);
             value = sinf(t * step * 6.2831853f) * envelope;
         }
-        else if (soundType == 3)
-        {
-            value = sinf(t * 180.0f * 6.2831853f) * envelope;
-        }
         else if (soundType == 4)
         {
-            float note = (p < 0.25f) ? 523.25f : ((p < 0.5f) ? 659.25f : ((p < 0.75f) ? 783.99f : 1046.5f));
-            float shimmer = sinf(t * note * 6.2831853f) + (0.35f * sinf(t * note * 2.0f * 6.2831853f));
-            value = shimmer * envelope;
+            float note = (p < 0.34f) ? 523.25f : ((p < 0.67f) ? 659.25f : 783.99f);
+            float softEnvelope = fminf(1.0f, p * 10.0f) * (1.0f - p) * (1.0f - p);
+            float shimmer = sinf(t * note * 6.2831853f) + (0.18f * sinf(t * note * 2.0f * 6.2831853f));
+            value = shimmer * softEnvelope;
+        }
+        else if (soundType == 6)
+        {
+            float freq = 150.0f - (70.0f * p);
+            float thump = sinf(t * freq * 6.2831853f);
+            value = thump * envelope;
+        }
+        else if (soundType == 7)
+        {
+            float freq = 820.0f + (320.0f * p);
+            float clickEnvelope = fminf(1.0f, p * 28.0f) * (1.0f - p) * (1.0f - p);
+            value = sinf(t * freq * 6.2831853f) * clickEnvelope;
+        }
+        else if (soundType == 8)
+        {
+            float crack = sinf(t * (1100.0f - 650.0f * p) * 6.2831853f);
+            float rumble = 0.45f * sinf(t * (95.0f - 35.0f * p) * 6.2831853f);
+            float snapEnvelope = fminf(1.0f, p * 38.0f) * (1.0f - p);
+            value = (crack + rumble) * snapEnvelope;
         }
         else
         {
@@ -3425,14 +3954,18 @@ void InitGameAudio(void)
     playerShotSound = CreateSynthSound(0);
     enemyShotSound = CreateSynthSound(1);
     playerReloadSound = CreateSynthSound(2);
-    playerMoveSound = CreateSynthSound(3);
+    playerHitSound = CreateSynthSound(6);
+    flashlightToggleSound = CreateSynthSound(7);
+    lightningSound = CreateSynthSound(8);
     victorySound = CreateSynthSound(4);
     gameOverSound = CreateSynthSound(5);
 
     SetSoundVolume(playerShotSound, PLAYER_SHOT_VOLUME);
     SetSoundVolume(enemyShotSound, ENEMY_SHOT_VOLUME);
     SetSoundVolume(playerReloadSound, PLAYER_RELOAD_VOLUME);
-    SetSoundVolume(playerMoveSound, PLAYER_MOVE_VOLUME);
+    SetSoundVolume(playerHitSound, 0.9f);
+    SetSoundVolume(flashlightToggleSound, 0.72f);
+    SetSoundVolume(lightningSound, 0.9f);
     SetSoundVolume(victorySound, VICTORY_VOLUME);
     SetSoundVolume(gameOverSound, GAME_OVER_VOLUME);
 
@@ -3457,7 +3990,9 @@ void ShutdownGameAudio(void)
     UnloadSound(playerShotSound);
     UnloadSound(enemyShotSound);
     UnloadSound(playerReloadSound);
-    UnloadSound(playerMoveSound);
+    UnloadSound(playerHitSound);
+    UnloadSound(flashlightToggleSound);
+    UnloadSound(lightningSound);
     UnloadSound(victorySound);
     UnloadSound(gameOverSound);
     CloseAudioDevice();
@@ -3474,14 +4009,15 @@ bool IsEnemyTouchingPlayer(Enemy *enemy)
     return CircleOverlapsTriangle(enemy->position, enemy->radius, GetPlayerTriangleHitbox(player.position));
 }
 
-void DamagePlayer(int damage)
+bool DamagePlayer(int damage)
 {
     if (!playerAlive || playerDamageCooldown > 0.0f)
     {
-        return;
+        return false;
     }
 
     playerHealth -= damage;
+    roundTookDamage = true;
     playerDamageCooldown = PLAYER_DAMAGE_COOLDOWN;
 
     if (playerHealth <= 0)
@@ -3493,6 +4029,50 @@ void DamagePlayer(int damage)
             PlaySound(gameOverSound);
         }
     }
+
+    return true;
+}
+
+void PushEnemyAwayFromPlayer(Enemy *enemy)
+{
+    Vector2 away = {
+        enemy->position.x - player.position.x,
+        enemy->position.y - player.position.y
+    };
+    float length = sqrtf((away.x * away.x) + (away.y * away.y));
+
+    if (length <= 0.0001f)
+    {
+        away.x = -enemy->direction.x;
+        away.y = -enemy->direction.y;
+        length = sqrtf((away.x * away.x) + (away.y * away.y));
+    }
+
+    if (length <= 0.0001f)
+    {
+        away = (Vector2){ 1.0f, 0.0f };
+        length = 1.0f;
+    }
+
+    away.x /= length;
+    away.y /= length;
+
+    for (float pushDistance = TILE_SIZE * 1.25f; pushDistance >= TILE_SIZE * 0.25f; pushDistance -= 3.0f)
+    {
+        Vector2 pushedPosition = {
+            enemy->position.x + away.x * pushDistance,
+            enemy->position.y + away.y * pushDistance
+        };
+
+        if (!IsPositionBlocked(pushedPosition, enemy->radius))
+        {
+            enemy->position = pushedPosition;
+            enemy->direction = away;
+            return;
+        }
+    }
+
+    enemy->direction = away;
 }
 
 void ApplyEnemyTouchDamage(void)
@@ -3501,7 +4081,14 @@ void ApplyEnemyTouchDamage(void)
     {
         if (IsEnemyTouchingPlayer(&redEnemies[i]))
         {
-            DamagePlayer(ENEMY_TOUCH_DAMAGE);
+            if (DamagePlayer(ENEMY_TOUCH_DAMAGE))
+            {
+                PushEnemyAwayFromPlayer(&redEnemies[i]);
+                if (gameAudioLoaded && playerAlive)
+                {
+                    PlaySound(playerHitSound);
+                }
+            }
             return;
         }
     }
@@ -3510,14 +4097,28 @@ void ApplyEnemyTouchDamage(void)
     {
         if (IsEnemyTouchingPlayer(&blueEnemies[i]))
         {
-            DamagePlayer(ENEMY_TOUCH_DAMAGE);
+            if (DamagePlayer(BLUE_BULLET_DAMAGE))
+            {
+                PushEnemyAwayFromPlayer(&blueEnemies[i]);
+                if (gameAudioLoaded && playerAlive)
+                {
+                    PlaySound(playerHitSound);
+                }
+            }
             return;
         }
     }
 
     if (IsEnemyTouchingPlayer(&bossEnemy))
     {
-        DamagePlayer(ENEMY_TOUCH_DAMAGE);
+        if (DamagePlayer(ENEMY_TOUCH_DAMAGE))
+        {
+            PushEnemyAwayFromPlayer(&bossEnemy);
+            if (gameAudioLoaded && playerAlive)
+            {
+                PlaySound(playerHitSound);
+            }
+        }
     }
 }
 
@@ -3736,7 +4337,8 @@ void DrawPlayerHealthBar(float x, float y, float width, float scale)
 {
     Color healthColor = (Color){ 80, 230, 255, 255 };
     int healthFontSize = ScaleFontSize(18.0f);
-    float healthRatio = (PLAYER_MAX_HEALTH > 0) ? ((float)playerHealth / (float)PLAYER_MAX_HEALTH) : 0.0f;
+    int currentMaxHealth = GetCurrentPlayerMaxHealth();
+    float healthRatio = (currentMaxHealth > 0) ? ((float)playerHealth / (float)currentMaxHealth) : 0.0f;
     int totalSegments = 10;
     int filledSegments = (int)ceilf(healthRatio * (float)totalSegments);
 
@@ -3749,7 +4351,7 @@ void DrawPlayerHealthBar(float x, float y, float width, float scale)
         healthColor = (Color){ 255, 170, 60, 255 };
     }
 
-    DrawTextStrongFit(TextFormat(T(TEXT_HEALTH), playerHealth, PLAYER_MAX_HEALTH), (int)x, (int)(y - 25.0f * scale), healthFontSize, 12, 1.0f * scale, width, RAYWHITE, BLACK);
+    DrawTextStrongFit(TextFormat(T(TEXT_HEALTH), playerHealth, currentMaxHealth), (int)x, (int)(y - 25.0f * scale), healthFontSize, 12, 1.0f * scale, width, RAYWHITE, BLACK);
     DrawSegmentedBar(x, y, width, 20.0f * scale, totalSegments, filledSegments, healthColor, (Color){ 30, 34, 52, 255 }, scale);
 }
 static void DrawTechPanel(Rectangle panel, Color accent)
@@ -3904,11 +4506,13 @@ void DrawHud(void)
                           medium, 7, 0.3f * scale, weapon.width - 40.0f * scale, HUD_BORDER_COLOR, BLACK);
         DrawTextStrongSpaced(T(TEXT_HUD_BALAS), (int)(weapon.x + pad), (int)(weapon.y + 36.0f * scale),
                              small, 0.3f * scale, (Color){ 150, 190, 240, 255 }, BLACK);
-        DrawTextStrongFit(TextFormat("%d / %d", playerAmmo, PLAYER_MAX_AMMO),
+        DrawTextStrongFit(TextFormat("%d / %d", playerAmmo, playerTotalAmmo),
                           (int)(weapon.x + weapon.width - 65.0f * scale), (int)(weapon.y + 31.0f * scale),
                           medium, 7, 0.3f * scale, 55.0f * scale, RAYWHITE, BLACK);
+        int ammoSegments = 15;
+        int filledAmmoSegments = (PLAYER_MAGAZINE_SIZE > 0) ? (int)ceilf(((float)playerAmmo / (float)PLAYER_MAGAZINE_SIZE) * (float)ammoSegments) : 0;
         DrawSegmentedBar(weapon.x + pad, weapon.y + 51.0f * scale, weapon.width - 2.0f * pad, 8.0f * scale,
-                         PLAYER_MAX_AMMO, playerAmmo, (Color){ 45, 195, 255, 255 }, (Color){ 20, 35, 66, 255 }, scale);
+                         ammoSegments, filledAmmoSegments, (Color){ 45, 195, 255, 255 }, (Color){ 20, 35, 66, 255 }, scale);
 
         float bottomY = (float)GetScreenHeight() - 92.0f * scale;
         Rectangle vital = { margin, bottomY, halfWidth, 82.0f * scale };
@@ -3920,11 +4524,12 @@ void DrawHud(void)
                           medium, 7, 0.25f * scale, vital.width - 40.0f * scale, HUD_ACCENT_COLOR, BLACK);
         DrawTextStrongSpaced(T(TEXT_HUD_VIDA), (int)(vital.x + pad), (int)(vital.y + 34.0f * scale),
                              small, 0.3f * scale, (Color){ 150, 190, 240, 255 }, BLACK);
-        DrawTextStrongFit(TextFormat("%d/%d", playerHealth, PLAYER_MAX_HEALTH),
+        int currentMaxHealth = GetCurrentPlayerMaxHealth();
+        DrawTextStrongFit(TextFormat("%d/%d", playerHealth, currentMaxHealth),
                           (int)(vital.x + 48.0f * scale), (int)(vital.y + 30.0f * scale), medium, 7, 0.25f * scale,
                           vital.width - 58.0f * scale, RAYWHITE, BLACK);
         DrawSegmentedBar(vital.x + pad, vital.y + 50.0f * scale, vital.width - 2.0f * pad, 8.0f * scale,
-                         10, (int)ceilf(((float)playerHealth / PLAYER_MAX_HEALTH) * 10.0f),
+                         10, (int)ceilf(((float)playerHealth / currentMaxHealth) * 10.0f),
                          (Color){ 190, 70, 255, 255 }, (Color){ 35, 25, 60, 255 }, scale);
 
         DrawTechPanel(controls, HUD_ACCENT_COLOR);
@@ -3985,9 +4590,10 @@ void DrawHud(void)
                      (Color){ 50, 205, 255, 255 }, (Color){ 18, 28, 60, 255 }, scale);
 
     y += log.height + gap;
-    float equalPanelHeight = 194.0f * scale;
+    float dataPanelHeight = 194.0f * scale;
+    float controlsPanelHeight = 300.0f * scale;
 
-    Rectangle vital = { leftX, y, panelWidth, equalPanelHeight };
+    Rectangle vital = { leftX, y, panelWidth, dataPanelHeight };
     DrawTechPanel(vital, HUD_ACCENT_COLOR);
     DrawHeartbeatIcon((Vector2){ vital.x + 18.0f * scale, vital.y + 17.0f * scale }, 8.0f * scale, HUD_ACCENT_COLOR);
     DrawTextStrongFit(T(TEXT_HUD_VITAL_TITLE), (int)(vital.x + 32.0f * scale), (int)(vital.y + 11.0f * scale),
@@ -3995,18 +4601,19 @@ void DrawHud(void)
                    HUD_ACCENT_COLOR, BLACK);
     DrawTextStrongSpaced(T(TEXT_HUD_VIDA), (int)(vital.x + pad), (int)(vital.y + 54.0f * scale),
                    medium, 0.3f * scale, (Color){ 150, 190, 240, 255 }, BLACK);
-    DrawTextStrongFit(TextFormat("%d/%d", playerHealth, PLAYER_MAX_HEALTH),
+    int currentMaxHealth = GetCurrentPlayerMaxHealth();
+    DrawTextStrongFit(TextFormat("%d/%d", playerHealth, currentMaxHealth),
                       (int)(vital.x + pad), (int)(vital.y + 78.0f * scale),
                       large, ScaleFontSize(11.0f), 0.35f * scale, vital.width - 2.0f * pad, RAYWHITE, BLACK);
     DrawSegmentedBar(vital.x + pad, vital.y + vital.height - 34.0f * scale, vital.width - 2.0f * pad, 14.0f * scale,
-                     10, (int)ceilf(((float)playerHealth / PLAYER_MAX_HEALTH) * 10.0f),
+                     10, (int)ceilf(((float)playerHealth / currentMaxHealth) * 10.0f),
                      (Color){ 190, 70, 255, 255 }, (Color){ 35, 25, 60, 255 }, scale);
 
     float rightWidth = GetHudRightPanelWidth();
     float rightX = (float)GetScreenWidth() - rightWidth - (10.0f * scale);
     float rightContentWidth = rightWidth - 2.0f * pad;
 
-    Rectangle weapon = { rightX, 92.0f * scale, rightWidth, equalPanelHeight };
+    Rectangle weapon = { rightX, 92.0f * scale, rightWidth, dataPanelHeight };
     DrawTechPanel(weapon, HUD_BORDER_COLOR);
     DrawCrosshairIcon((Vector2){ weapon.x + 18.0f * scale, weapon.y + 17.0f * scale }, 8.0f * scale, HUD_BORDER_COLOR);
     DrawTextStrongFit(T(TEXT_HUD_WEAPON_TITLE), (int)(weapon.x + 32.0f * scale), (int)(weapon.y + 11.0f * scale),
@@ -4014,11 +4621,13 @@ void DrawHud(void)
                    HUD_BORDER_COLOR, BLACK);
     DrawTextStrongSpaced(T(TEXT_HUD_BALAS), (int)(weapon.x + pad), (int)(weapon.y + 54.0f * scale),
                    medium, 0.3f * scale, (Color){ 150, 190, 240, 255 }, BLACK);
-    DrawTextStrongFit(TextFormat("%d / %d", playerAmmo, PLAYER_MAX_AMMO),
+    DrawTextStrongFit(TextFormat("%d / %d", playerAmmo, playerTotalAmmo),
                       (int)(weapon.x + pad), (int)(weapon.y + 78.0f * scale),
                       large, ScaleFontSize(11.0f), 0.35f * scale, rightContentWidth, RAYWHITE, BLACK);
+    int ammoSegments = 15;
+    int filledAmmoSegments = (PLAYER_MAGAZINE_SIZE > 0) ? (int)ceilf(((float)playerAmmo / (float)PLAYER_MAGAZINE_SIZE) * (float)ammoSegments) : 0;
     DrawSegmentedBar(weapon.x + pad, weapon.y + weapon.height - 34.0f * scale, rightContentWidth, 14.0f * scale,
-                     PLAYER_MAX_AMMO, playerAmmo, (Color){ 45, 195, 255, 255 }, (Color){ 20, 35, 66, 255 }, scale);
+                     ammoSegments, filledAmmoSegments, (Color){ 45, 195, 255, 255 }, (Color){ 20, 35, 66, 255 }, scale);
     if (playerReloadTimer > 0.0f)
     {
         /* Reload animation: a horizontal sweep bar fills up under the ammo
@@ -4033,7 +4642,7 @@ void DrawHud(void)
                        small, 0.2f * scale, Fade((Color){ 255, 205, 60, 255 }, pulse), BLACK);
     }
 
-    Rectangle controls = { rightX, weapon.y + weapon.height + gap, rightWidth, equalPanelHeight };
+    Rectangle controls = { rightX, weapon.y + weapon.height + gap, rightWidth, controlsPanelHeight };
     DrawTechPanel(controls, HUD_ACCENT_COLOR);
     DrawKeyboardIcon((Vector2){ controls.x + 18.0f * scale, controls.y + 17.0f * scale }, 8.0f * scale, HUD_ACCENT_COLOR);
     DrawTextStrongFit(T(TEXT_HUD_CONTROLS_TITLE), (int)(controls.x + 32.0f * scale), (int)(controls.y + 11.0f * scale),
@@ -4042,20 +4651,38 @@ void DrawHud(void)
     DrawTextStrongSpaced(T(TEXT_HUD_ATIRAR), (int)(controls.x + pad), (int)(controls.y + 54.0f * scale),
                    small, 0.3f * scale, (Color){ 150, 190, 240, 255 }, BLACK);
     DrawKeyCap("ESPACO", controls.x + pad, controls.y + 76.0f * scale, fminf(104.0f * scale, rightContentWidth), scale);
-    DrawTextStrongSpaced(T(TEXT_HUD_RECARREGAR), (int)(controls.x + pad), (int)(controls.y + 118.0f * scale),
+    DrawTextStrongSpaced(T(TEXT_HUD_RECARREGAR), (int)(controls.x + pad), (int)(controls.y + 112.0f * scale),
                    small, 0.3f * scale, (Color){ 150, 190, 240, 255 }, BLACK);
-    DrawKeyCap("R", controls.x + pad, controls.y + 140.0f * scale, 44.0f * scale, scale);
+    DrawKeyCap("R", controls.x + pad, controls.y + 132.0f * scale, 44.0f * scale, scale);
 
     if (currentRoundConfig.flashlightEnabled)
     {
-        DrawTextStrongFit(T(TEXT_HUD_LANTERNA), (int)(controls.x + 74.0f * scale), (int)(controls.y + 143.0f * scale),
-                       small, ScaleFontSize(6.0f), 0.2f * scale, rightContentWidth - 76.0f * scale, HUD_ACCENT_COLOR, BLACK);
+        float percentWidth = 54.0f * scale;
+        DrawTextStrongSpaced(T(TEXT_HUD_LANTERNA), (int)(controls.x + pad), (int)(controls.y + 164.0f * scale),
+                   small, 0.3f * scale, HUD_ACCENT_COLOR, BLACK);
+        DrawKeyCap("C", controls.x + pad, controls.y + 184.0f * scale, 44.0f * scale, scale);
         float batteryFraction = fmaxf(0.0f, fminf(1.0f, flashlightBattery / FLASHLIGHT_MAX_BATTERY));
-        DrawTextStrongFit(TextFormat("%.0f%%", flashlightBattery), (int)(controls.x + rightWidth - 62.0f * scale), (int)(controls.y + 143.0f * scale),
-                       small, 6, 0.2f * scale, 42.0f * scale, RAYWHITE, BLACK);
-        DrawSegmentedBar(controls.x + pad, controls.y + controls.height - 20.0f * scale, rightContentWidth, 8.0f * scale,
+        DrawTextStrongFit(TextFormat("%.0f%%", flashlightBattery), (int)(controls.x + rightWidth - pad - percentWidth), (int)(controls.y + 188.0f * scale),
+                       small, 6, 0.2f * scale, percentWidth, RAYWHITE, BLACK);
+        DrawSegmentedBar(controls.x + pad, controls.y + 220.0f * scale, rightContentWidth, 8.0f * scale,
                          10, (int)ceilf(batteryFraction * 10.0f),
                          (Color){ 255, 205, 60, 255 }, (Color){ 60, 50, 20, 255 }, scale);
+    }
+
+    if (IsLightningAvailableThisRound())
+    {
+        DrawTextStrongSpaced(T(TEXT_HUD_LIGHTNING), (int)(controls.x + pad), (int)(controls.y + 244.0f * scale),
+                   small, 0.3f * scale, (Color){ 120, 230, 255, 255 }, BLACK);
+        DrawKeyCap("F", controls.x + pad, controls.y + 264.0f * scale, 44.0f * scale, scale);
+        DrawTextStrongFit(TextFormat("%d", lightningCharges), (int)(controls.x + 60.0f * scale), (int)(controls.y + 268.0f * scale),
+                       small, 6, 0.2f * scale, rightContentWidth - 60.0f * scale, RAYWHITE, BLACK);
+    }
+
+    if (IsLockedExitRound())
+    {
+        DrawTextStrongSpaced(hasExitKey ? "CHAVE: OK" : "ACHE A CHAVE",
+                   (int)(controls.x + pad), (int)(controls.y + controls.height - 24.0f * scale),
+                   small, 0.1f * scale, hasExitKey ? MAZE_EXIT_COLOR : GOLD, BLACK);
     }
 }
 
@@ -4136,7 +4763,7 @@ Rectangle GetVictoryNextButtonRect(Rectangle panel)
 
     return (Rectangle){
         panel.x + 70.0f * scale,
-        panel.y + 148.0f * scale,
+        panel.y + 188.0f * scale,
         panel.width - 140.0f * scale,
         58.0f * scale
     };
@@ -4153,7 +4780,7 @@ void DrawVictoryOverlay(void)
     int titleFontSize = ScaleFontSize(33.0f);
     int buttonFontSize = ScaleFontSize(22.0f);
     float panelWidth = fminf((float)screenWidth - 40.0f * scale, 540.0f * scale);
-    float panelHeight = 250.0f * scale;
+    float panelHeight = 300.0f * scale;
     Rectangle panel = {
         ((float)screenWidth - panelWidth) * 0.5f,
         ((float)screenHeight - panelHeight) * 0.5f,
@@ -4198,6 +4825,13 @@ void DrawVictoryOverlay(void)
                (Vector2){ panel.x + panel.width - 42.0f * scale, panel.y + 130.0f * scale },
                1.0f * scale, Fade(successColor, 0.42f));
 
+    if (!inTutorialSequence)
+    {
+        const char *bonusText = TextFormat("BONUS +%d  |  ITENS %d  |  TIROS %d", pendingRoundBonus, roundPickupsCollected, roundShotsFired);
+        DrawTextStrongFit(bonusText, (int)(panel.x + 44.0f * scale), (int)(panel.y + 148.0f * scale),
+                          ScaleFontSize(10.0f), ScaleFontSize(8.0f), 0.0f, panel.width - 88.0f * scale, GOLD, BLACK);
+    }
+
     DrawRectangleRounded((Rectangle){ button.x - 2.0f * scale, button.y - 2.0f * scale, button.width + 4.0f * scale, button.height + 4.0f * scale }, 0.32f, 12, Fade(buttonColor, isButtonHovered ? 0.42f : 0.24f));
     DrawRectangleRounded(button, 0.3f, 12, buttonColor);
     DrawRectangleRoundedLinesEx(button, 0.3f, 12, 1.5f * scale, RAYWHITE);
@@ -4220,7 +4854,7 @@ bool HandleVictoryButton(void)
 
     float scale = GetUIScale();
     float panelWidth = fminf((float)GetScreenWidth() - 40.0f * scale, 540.0f * scale);
-    float panelHeight = 250.0f * scale;
+    float panelHeight = 300.0f * scale;
     Rectangle panel = {
         ((float)GetScreenWidth() - panelWidth) * 0.5f,
         ((float)GetScreenHeight() - panelHeight) * 0.5f,
@@ -4283,6 +4917,26 @@ void DrawPlayer(void)
     DrawTriangle(tip, right, left, playerCore);
     DrawTriangleLines(tip, right, left, playerEdge);
     DrawCircleV(center, fmaxf(drawRadius * 0.18f, 2.0f), playerEdge);
+}
+
+void DrawFloatingNotices(void)
+{
+    MazeLayout layout = GetMazeLayout();
+    int fontSize = ScaleFontSize(8.0f);
+
+    for (int i = 0; i < MAX_FLOATING_NOTICES; i++)
+    {
+        if (floatingNotices[i].timer <= 0.0f)
+        {
+            continue;
+        }
+
+        Vector2 screenPosition = WorldToScreenPositionLayout(floatingNotices[i].position, layout);
+        float alpha = fminf(1.0f, floatingNotices[i].timer / FLOATING_NOTICE_TIME);
+        DrawTextStrongSpaced(floatingNotices[i].text, (int)(screenPosition.x - 38.0f * layout.drawScale),
+                             (int)(screenPosition.y - 24.0f * layout.drawScale), fontSize, 0.0f,
+                             Fade(floatingNotices[i].color, alpha), BLACK);
+    }
 }
 
 void DrawEnemies(void)
@@ -4397,6 +5051,12 @@ void DrawBullets(void)
 
 void DrawVisibilityEffects(void)
 {
+    if (lightningRevealTimer > 0.0f)
+    {
+        float flashAlpha = 0.05f + 0.13f * fminf(1.0f, lightningRevealTimer / LIGHTNING_REVEAL_TIME);
+        DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Fade(RAYWHITE, flashAlpha));
+    }
+
     if (!currentRoundConfig.flashlightEnabled)
     {
         return;
@@ -4716,6 +5376,7 @@ bool HandlePanelButtons(void)
         tutorialRound = 1;
         officialRound = 1;
         bestOfficialRound = 1;
+        ResetOfficialRunStats();
         StartCurrentStage();
         return true;
     }
@@ -4733,6 +5394,371 @@ bool HandlePanelButtons(void)
             gamePhase = PHASE_PLAYING;
         }
 
+        return true;
+    }
+
+    return false;
+}
+
+int ScaleShopFontSize(float fontSize)
+{
+    return ScaleFontSize(fontSize);
+}
+
+Rectangle GetShopPanelRect(void)
+{
+    float scale = GetUIScale();
+    float panelWidth = fminf((float)GetScreenWidth() - (56.0f * scale), 1040.0f * scale);
+    float panelHeight = fminf((float)GetScreenHeight() - (112.0f * scale), 560.0f * scale);
+    panelHeight = fmaxf(panelHeight, 470.0f * scale);
+
+    return (Rectangle){
+        ((float)GetScreenWidth() - panelWidth) * 0.5f,
+        fmaxf(56.0f * scale, ((float)GetScreenHeight() - panelHeight) * 0.5f),
+        panelWidth,
+        panelHeight
+    };
+}
+
+int GetShopColumnCount(void)
+{
+    Rectangle panel = GetShopPanelRect();
+
+    return panel.width >= 980.0f * GetUIScale() ? 4 : 2;
+}
+
+Rectangle GetShopCardRect(int index)
+{
+    Rectangle panel = GetShopPanelRect();
+    float scale = GetUIScale();
+    float pad = 30.0f * scale;
+    float headerHeight = 150.0f * scale;
+    float footerHeight = 112.0f * scale;
+    float gap = 16.0f * scale;
+    int columns = GetShopColumnCount();
+    int row = index / columns;
+    int column = index % columns;
+    int rows = (columns == 4) ? 1 : 2;
+    float contentWidth = panel.width - (pad * 2.0f);
+    float contentHeight = panel.height - headerHeight - footerHeight;
+    float cardWidth = (contentWidth - gap * (float)(columns - 1)) / (float)columns;
+    float cardHeight = (contentHeight - gap * (float)(rows - 1)) / (float)rows;
+
+    return (Rectangle){
+        panel.x + pad + (float)column * (cardWidth + gap),
+        panel.y + headerHeight + (float)row * (cardHeight + gap),
+        cardWidth,
+        cardHeight
+    };
+}
+
+Rectangle GetShopBuyButtonRect(int index)
+{
+    Rectangle card = GetShopCardRect(index);
+    float scale = GetUIScale();
+    return (Rectangle){
+        card.x + 18.0f * scale,
+        card.y + card.height - 60.0f * scale,
+        card.width - 36.0f * scale,
+        42.0f * scale
+    };
+}
+
+Rectangle GetShopStartButtonRect(void)
+{
+    Rectangle panel = GetShopPanelRect();
+    float scale = GetUIScale();
+    float width = fminf(300.0f * scale, panel.width - 56.0f * scale);
+
+    return (Rectangle){
+        panel.x + (panel.width - width) * 0.5f,
+        panel.y + panel.height - 78.0f * scale,
+        width,
+        46.0f * scale
+    };
+}
+
+Rectangle GetShopButtonRect(int index)
+{
+    if (index == 4)
+    {
+        return GetShopStartButtonRect();
+    }
+
+    return GetShopBuyButtonRect(index);
+}
+
+bool IsShopBatteryAvailable(void)
+{
+    return GetOfficialRoundConfig(officialRound).flashlightEnabled;
+}
+
+const char *GetShopBuyLabel(void)
+{
+    if (currentLanguage == LANGUAGE_EN) return "BUY";
+    if (currentLanguage == LANGUAGE_KO) return "구매";
+    return "COMPRAR";
+}
+
+const char *GetShopItemDescription(int index)
+{
+    if (currentLanguage == LANGUAGE_EN)
+    {
+        if (index == 0) return "Buy +50 ammo";
+        if (index == 1) return "Max health +5";
+        if (index == 2) return "Reveal map for 3s";
+        return "Battery to 50%";
+    }
+
+    if (currentLanguage == LANGUAGE_ES)
+    {
+        if (index == 0) return "Compra +50 municion";
+        if (index == 1) return "Vida max +5";
+        if (index == 2) return "Revela mapa 3s";
+        return "Bateria al 50%";
+    }
+
+    if (currentLanguage == LANGUAGE_KO)
+    {
+        if (index == 0) return "최대 탄약이 15 증가합니다";
+        if (index == 1) return "최대 체력이 5 증가합니다";
+        if (index == 2) return "3초 동안 전체 지도를 밝힙니다";
+        return "손전등 배터리를 100퍼센트로 회복합니다";
+    }
+
+    if (index == 0) return "Compra +50 municao";
+    if (index == 1) return "Vida max +5";
+    if (index == 2) return "Revela mapa 3s";
+    return "Bateria para 50%";
+}
+
+void DrawShopItemIcon(int index, Vector2 center, float radius, Color accent)
+{
+    Rectangle iconBack = {
+        center.x - radius * 1.8f,
+        center.y - radius * 1.05f,
+        radius * 3.6f,
+        radius * 2.1f
+    };
+
+    DrawRectangleRounded(iconBack, 0.18f, 8, (Color){ 3, 10, 26, 255 });
+    DrawRectangleRoundedLinesEx(iconBack, 0.18f, 8, 1.0f, Fade(accent, 0.35f));
+
+    if (index == 0)
+    {
+        DrawRectangleLinesEx((Rectangle){ center.x - radius * 0.55f, center.y - radius * 0.45f, radius * 1.1f, radius * 0.9f }, 2.0f, accent);
+        DrawLineEx((Vector2){ center.x - radius * 0.55f, center.y - radius * 0.45f }, (Vector2){ center.x, center.y - radius * 0.78f }, 2.0f, accent);
+        DrawLineEx((Vector2){ center.x + radius * 0.55f, center.y - radius * 0.45f }, (Vector2){ center.x, center.y - radius * 0.78f }, 2.0f, accent);
+        DrawLineEx((Vector2){ center.x, center.y + radius * 0.78f }, (Vector2){ center.x - radius * 0.55f, center.y + radius * 0.45f }, 2.0f, accent);
+        DrawLineEx((Vector2){ center.x, center.y + radius * 0.78f }, (Vector2){ center.x + radius * 0.55f, center.y + radius * 0.45f }, 2.0f, accent);
+    }
+    else if (index == 1)
+    {
+        DrawCircleV((Vector2){ center.x - radius * 0.32f, center.y - radius * 0.25f }, radius * 0.42f, Fade(accent, 0.85f));
+        DrawCircleV((Vector2){ center.x + radius * 0.32f, center.y - radius * 0.25f }, radius * 0.42f, Fade(accent, 0.85f));
+        DrawTriangle((Vector2){ center.x - radius * 0.75f, center.y - radius * 0.05f },
+                     (Vector2){ center.x + radius * 0.75f, center.y - radius * 0.05f },
+                     (Vector2){ center.x, center.y + radius * 0.82f }, Fade(accent, 0.85f));
+        DrawLineEx((Vector2){ center.x - radius * 0.55f, center.y }, (Vector2){ center.x - radius * 0.1f, center.y }, 2.0f, BLACK);
+        DrawLineEx((Vector2){ center.x - radius * 0.1f, center.y }, (Vector2){ center.x + radius * 0.05f, center.y - radius * 0.32f }, 2.0f, BLACK);
+        DrawLineEx((Vector2){ center.x + radius * 0.05f, center.y - radius * 0.32f }, (Vector2){ center.x + radius * 0.2f, center.y + radius * 0.18f }, 2.0f, BLACK);
+        DrawLineEx((Vector2){ center.x + radius * 0.2f, center.y + radius * 0.18f }, (Vector2){ center.x + radius * 0.58f, center.y + radius * 0.18f }, 2.0f, BLACK);
+    }
+    else if (index == 2)
+    {
+        Vector2 points[6] = {
+            { center.x + radius * 0.15f, center.y - radius * 0.92f },
+            { center.x - radius * 0.62f, center.y + radius * 0.1f },
+            { center.x - radius * 0.05f, center.y + radius * 0.1f },
+            { center.x - radius * 0.24f, center.y + radius * 0.92f },
+            { center.x + radius * 0.68f, center.y - radius * 0.22f },
+            { center.x + radius * 0.08f, center.y - radius * 0.22f }
+        };
+        for (int i = 0; i < 5; i++) DrawLineEx(points[i], points[i + 1], 3.0f, accent);
+    }
+    else
+    {
+        DrawRectangleRoundedLinesEx((Rectangle){ center.x - radius * 0.65f, center.y - radius * 0.48f, radius * 1.15f, radius * 0.96f }, 0.2f, 6, 2.0f, accent);
+        DrawRectangleRec((Rectangle){ center.x + radius * 0.58f, center.y - radius * 0.18f, radius * 0.18f, radius * 0.36f }, accent);
+        Vector2 points[6] = {
+            { center.x + radius * 0.02f, center.y - radius * 0.38f },
+            { center.x - radius * 0.3f, center.y + radius * 0.05f },
+            { center.x - radius * 0.02f, center.y + radius * 0.05f },
+            { center.x - radius * 0.16f, center.y + radius * 0.43f },
+            { center.x + radius * 0.33f, center.y - radius * 0.08f },
+            { center.x + radius * 0.08f, center.y - radius * 0.08f }
+        };
+        for (int i = 0; i < 5; i++) DrawLineEx(points[i], points[i + 1], 2.0f, accent);
+    }
+}
+
+void DrawShopPricePill(Rectangle card, const char *detail, bool enabled, Color accent)
+{
+    float scale = GetUIScale();
+    Rectangle pill = { card.x + 18.0f * scale, card.y + card.height - 104.0f * scale, 146.0f * scale, 36.0f * scale };
+    int priceSize = ScaleShopFontSize(11.0f);
+
+    DrawRectangleRounded(pill, 0.22f, 8, enabled ? (Color){ 55, 4, 75, 255 } : (Color){ 22, 22, 38, 255 });
+    DrawRectangleRoundedLinesEx(pill, 0.22f, 8, 1.0f * scale, enabled ? MAGENTA : Fade(LIGHTGRAY, 0.3f));
+    DrawCircleV((Vector2){ pill.x + 14.0f * scale, pill.y + pill.height * 0.5f }, 4.0f * scale, GOLD);
+    DrawCircleV((Vector2){ pill.x + 14.0f * scale, pill.y + pill.height * 0.5f }, 2.0f * scale, (Color){ 55, 4, 75, 255 });
+    DrawTextStrongFit(detail, (int)(pill.x + 28.0f * scale), (int)(pill.y + 10.0f * scale),
+                      priceSize, ScaleShopFontSize(9.0f), 0.0f, pill.width - 42.0f * scale,
+                      enabled ? RAYWHITE : Fade(LIGHTGRAY, 0.6f), BLACK);
+}
+
+void DrawShopButton(int index, const char *label, const char *detail, bool enabled, Color accent)
+{
+    float scale = GetUIScale();
+    Rectangle card = GetShopCardRect(index);
+    Rectangle buyButton = GetShopBuyButtonRect(index);
+    Vector2 mousePosition = GetMousePosition();
+    bool hovered = enabled && CheckCollisionPointRec(mousePosition, buyButton);
+    Color fill = enabled ? (hovered ? (Color){ 20, 235, 250, 255 } : (Color){ 18, 215, 235, 255 }) : (Color){ 24, 28, 42, 255 };
+    Color border = enabled ? accent : Fade(LIGHTGRAY, 0.25f);
+    int labelSize = ScaleShopFontSize(18.0f);
+    int descriptionSize = ScaleShopFontSize(12.0f);
+    int buySize = ScaleShopFontSize(12.0f);
+    float iconY = card.y + 54.0f * scale;
+
+    if (card.height < 190.0f * scale)
+    {
+        iconY = card.y + 34.0f * scale;
+    }
+
+    DrawRectangleRounded(card, 0.03f, 8, (Color){ 8, 12, 32, 248 });
+    DrawRectangleRoundedLinesEx((Rectangle){ card.x - 2.0f, card.y - 2.0f, card.width + 4.0f, card.height + 4.0f }, 0.03f, 8, 4.0f * scale, Fade(accent, 0.12f));
+    DrawRectangleRoundedLinesEx(card, 0.03f, 8, 1.5f * scale, border);
+
+    DrawShopItemIcon(index, (Vector2){ card.x + card.width * 0.5f, iconY }, 19.0f * scale, accent);
+    DrawTextStrongFit(label, (int)(card.x + 18.0f * scale), (int)(iconY + 48.0f * scale),
+                      labelSize, ScaleShopFontSize(13.0f), 0.0f,
+                      card.width - 36.0f * scale,
+                      enabled ? RAYWHITE : Fade(LIGHTGRAY, 0.6f), BLACK);
+    DrawTextStrongFit(GetShopItemDescription(index), (int)(card.x + 18.0f * scale), (int)(iconY + 82.0f * scale),
+                      descriptionSize, ScaleShopFontSize(10.0f), 0.0f,
+                      card.width - 36.0f * scale,
+                      enabled ? (Color){ 190, 205, 230, 255 } : Fade(LIGHTGRAY, 0.65f), BLACK);
+
+    DrawShopPricePill(card, detail, enabled, accent);
+    DrawRectangleRounded(buyButton, 0.13f, 8, fill);
+    DrawRectangleRoundedLinesEx(buyButton, 0.13f, 8, 1.0f * scale, Fade(RAYWHITE, hovered ? 0.8f : 0.25f));
+    DrawTextStrongFit(GetShopBuyLabel(), (int)(buyButton.x + 12.0f * scale), (int)(buyButton.y + 9.0f * scale),
+                      buySize, ScaleShopFontSize(10.0f), 0.0f,
+                      buyButton.width - 24.0f * scale, enabled ? BLACK : Fade(LIGHTGRAY, 0.65f), Fade(WHITE, 0.2f));
+}
+
+void DrawShopPanel(void)
+{
+    float scale = GetUIScale();
+    Rectangle panel = GetShopPanelRect();
+    Rectangle coinPill = { panel.x + panel.width - 180.0f * scale, panel.y + 34.0f * scale, 148.0f * scale, 34.0f * scale };
+    int smallSize = ScaleShopFontSize(9.0f);
+    int titleSize = ScaleShopFontSize(32.0f);
+    int coinsSize = ScaleShopFontSize(11.0f);
+    bool batteryAvailable = IsShopBatteryAvailable();
+    bool healthCanGrow = playerMaxHealth < PLAYER_MAX_HEALTH;
+    bool ammoCanGrow = playerTotalAmmo < PLAYER_MAX_AMMO_CAP;
+
+    DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Fade(BLACK, 0.78f));
+    DrawRectangleRounded(panel, 0.08f, 12, (Color){ 6, 12, 36, 245 });
+    DrawRectangleRoundedLinesEx(panel, 0.08f, 12, 3.0f * scale, HUD_BORDER_COLOR);
+
+    DrawCircleV((Vector2){ panel.x + 30.0f * scale, panel.y + 40.0f * scale }, 3.5f * scale, (Color){ 0, 240, 255, 255 });
+    DrawTextStrongSpaced("SYSTEM: ONLINE", (int)(panel.x + 42.0f * scale), (int)(panel.y + 34.0f * scale),
+                         smallSize, 0.0f, (Color){ 0, 245, 255, 255 }, BLACK);
+    DrawTextStrongSpaced("SECTOR_SHOP_V2.4", (int)(panel.x + panel.width - 172.0f * scale), (int)(panel.y + 82.0f * scale),
+                         smallSize, 0.0f, (Color){ 160, 175, 205, 255 }, BLACK);
+    DrawTextStrongSpaced("BYTEMAZE // TERMINAL", (int)(panel.x + 30.0f * scale), (int)(panel.y + 82.0f * scale),
+                         smallSize, 0.0f, (Color){ 0, 245, 255, 255 }, BLACK);
+    DrawTextStrongSpaced(T(TEXT_SHOP_TITLE), (int)(panel.x + 30.0f * scale), (int)(panel.y + 104.0f * scale),
+                         titleSize, 1.0f * scale, RAYWHITE, MAGENTA);
+
+    DrawRectangleRounded(coinPill, 0.2f, 8, (Color){ 35, 30, 0, 255 });
+    DrawRectangleRoundedLinesEx(coinPill, 0.2f, 8, 1.5f * scale, GOLD);
+    DrawCircleV((Vector2){ coinPill.x + 17.0f * scale, coinPill.y + coinPill.height * 0.5f }, 5.5f * scale, GOLD);
+    DrawCircleV((Vector2){ coinPill.x + 17.0f * scale, coinPill.y + coinPill.height * 0.5f }, 3.0f * scale, (Color){ 35, 30, 0, 255 });
+    DrawTextStrongFit(TextFormat(T(TEXT_SHOP_COINS), playerCoins), (int)(coinPill.x + 30.0f * scale), (int)(coinPill.y + 10.0f * scale),
+                      coinsSize, ScaleShopFontSize(9.0f), 0.0f, coinPill.width - 46.0f * scale, RAYWHITE, BLACK);
+
+    DrawRectangleRec((Rectangle){ panel.x + 30.0f * scale, panel.y + 144.0f * scale, panel.width - 60.0f * scale, 4.0f * scale }, MAGENTA);
+
+    DrawShopButton(0, T(TEXT_SHOP_BUY_AMMO), ammoCanGrow ? TextFormat("%d PTS", SHOP_STANDARD_PRICE) : T(TEXT_SHOP_MAX),
+                   ammoCanGrow && playerCoins >= SHOP_STANDARD_PRICE, HUD_BORDER_COLOR);
+    DrawShopButton(1, T(TEXT_SHOP_BUY_HEALTH), healthCanGrow ? TextFormat("%d PTS", SHOP_STANDARD_PRICE) : T(TEXT_SHOP_MAX),
+                   healthCanGrow && playerCoins >= SHOP_STANDARD_PRICE, (Color){ 190, 70, 255, 255 });
+    DrawShopButton(2, T(TEXT_SHOP_BUY_LIGHTNING), IsLightningAvailableThisRound() ? TextFormat("%d PTS", SHOP_LIGHTNING_PRICE) : T(TEXT_SHOP_LOCKED),
+                   IsLightningAvailableThisRound() && playerCoins >= SHOP_LIGHTNING_PRICE, (Color){ 120, 230, 255, 255 });
+    DrawShopButton(3, T(TEXT_SHOP_BUY_BATTERY), batteryAvailable ? TextFormat("%d PTS", SHOP_STANDARD_PRICE) : T(TEXT_SHOP_LOCKED),
+                   batteryAvailable && playerCoins >= SHOP_STANDARD_PRICE, (Color){ 255, 205, 60, 255 });
+
+    Rectangle startButton = GetShopStartButtonRect();
+    Vector2 mousePosition = GetMousePosition();
+    bool hovered = CheckCollisionPointRec(mousePosition, startButton);
+    DrawRectangleRounded(startButton, 0.18f, 10, hovered ? (Color){ 70, 18, 115, 255 } : (Color){ 16, 10, 44, 255 });
+    DrawRectangleRoundedLinesEx(startButton, 0.18f, 10, 1.5f * scale, MAGENTA);
+    DrawTextStrongFit(T(TEXT_SHOP_START), (int)(startButton.x + 16.0f * scale), (int)(startButton.y + 14.0f * scale),
+                      ScaleShopFontSize(13.0f), ScaleShopFontSize(10.0f), 0.0f,
+                      startButton.width - 32.0f * scale, MAGENTA, BLACK);
+}
+
+bool HandleShopButtons(void)
+{
+    if (gamePhase != PHASE_SHOP || !IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+    {
+        return false;
+    }
+
+    Vector2 mousePosition = GetMousePosition();
+
+    if (CheckCollisionPointRec(mousePosition, GetShopButtonRect(4)))
+    {
+        gamePhase = ShouldShowRoundInfo() ? PHASE_INFO : PHASE_PLAYING;
+        return true;
+    }
+
+    if (CheckCollisionPointRec(mousePosition, GetShopButtonRect(0)) && playerTotalAmmo < PLAYER_MAX_AMMO_CAP && playerCoins >= SHOP_STANDARD_PRICE)
+    {
+        playerCoins -= SHOP_STANDARD_PRICE;
+        if (playerMaxAmmo < PLAYER_MAX_AMMO_CAP)
+        {
+            playerMaxAmmo += SHOP_AMMO_GAIN;
+            if (playerMaxAmmo > PLAYER_MAX_AMMO_CAP)
+            {
+                playerMaxAmmo = PLAYER_MAX_AMMO_CAP;
+            }
+        }
+        playerTotalAmmo += SHOP_AMMO_GAIN;
+        if (playerTotalAmmo > PLAYER_MAX_AMMO_CAP)
+        {
+            playerTotalAmmo = PLAYER_MAX_AMMO_CAP;
+        }
+        return true;
+    }
+
+    if (CheckCollisionPointRec(mousePosition, GetShopButtonRect(1)) && playerMaxHealth < PLAYER_MAX_HEALTH && playerCoins >= SHOP_STANDARD_PRICE)
+    {
+        playerCoins -= SHOP_STANDARD_PRICE;
+        playerMaxHealth += SHOP_HEALTH_GAIN;
+        if (playerMaxHealth > PLAYER_MAX_HEALTH)
+        {
+            playerMaxHealth = PLAYER_MAX_HEALTH;
+        }
+        playerHealth = playerMaxHealth;
+        return true;
+    }
+
+    if (CheckCollisionPointRec(mousePosition, GetShopButtonRect(2)) && IsLightningAvailableThisRound() && playerCoins >= SHOP_LIGHTNING_PRICE)
+    {
+        playerCoins -= SHOP_LIGHTNING_PRICE;
+        lightningCharges++;
+        return true;
+    }
+
+    if (CheckCollisionPointRec(mousePosition, GetShopButtonRect(3)) && IsShopBatteryAvailable() && playerCoins >= SHOP_STANDARD_PRICE)
+    {
+        playerCoins -= SHOP_STANDARD_PRICE;
+        flashlightBattery = FLASHLIGHT_MAX_BATTERY;
         return true;
     }
 
@@ -4757,6 +5783,7 @@ int main(int argc, char *argv[])
         UpdateGameAudio();
         HandleLanguageButtons();
         HandlePanelButtons();
+        HandleShopButtons();
         HandleVictoryButton();
 
         if (gamePhase == PHASE_INTRO)
@@ -4770,6 +5797,10 @@ int main(int argc, char *argv[])
                 SetupRound();
             }
 
+        }
+        else if (gamePhase == PHASE_SHOP)
+        {
+            /* Purchases happen before the round is generated. */
         }
         else if (gamePhase == PHASE_PLAYING)
         {
@@ -4796,9 +5827,12 @@ int main(int argc, char *argv[])
                     }
 
                     UpdatePlayer();
+                    CollectCurrentCellPickup();
+                    UpdateFloatingNotices();
                     UpdatePlayerShooting();
                     UpdatePlayerReload();
                     UpdateFlashlight();
+                    UpdateLightningReveal();
                     for (int i = 0; i < RED_ENEMY_COUNT; i++)
                     {
                         UpdateRedEnemy(&redEnemies[i]);
@@ -4813,6 +5847,7 @@ int main(int argc, char *argv[])
 
                     if (DidPlayerReachExit())
                     {
+                        FinishRoundRewards();
                         if (gameAudioLoaded)
                         {
                             PlaySound(victorySound);
@@ -4832,6 +5867,7 @@ int main(int argc, char *argv[])
         {
             DrawMazeGrid();
             DrawVisibilityEffects();
+            DrawFloatingNotices();
             DrawPlayer();
             DrawEnemies();
             DrawBullets();
@@ -4852,12 +5888,19 @@ int main(int argc, char *argv[])
         {
             DrawRoundPanel(GetIntroTitle(), GetIntroBody(), T(TEXT_INTRO_FOOTER));
         }
+        else if (gamePhase == PHASE_SHOP)
+        {
+            DrawShopPanel();
+        }
         else if (gamePhase == PHASE_INFO)
         {
             DrawRoundPanel(GetRoundInfoTitle(), GetRoundInfoBody(), T(TEXT_ROUND_FOOTER));
         }
 
-        DrawLanguageButtons();
+        if (gamePhase != PHASE_SHOP)
+        {
+            DrawLanguageButtons();
+        }
 
         EndDrawing();
     }
