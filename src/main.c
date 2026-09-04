@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdint.h>
 #include <sys/stat.h>
 
 #ifdef _MSC_VER
@@ -12,11 +13,12 @@
 #define SCREEN_WIDTH 960
 #define SCREEN_HEIGHT 640
 
-#define GRID_HEIGTH 33
-#define GRID_WIDTH 51
+#define GRID_HEIGTH 21
+#define GRID_WIDTH 31
 #define TILE_SIZE 24
 #define HUD_HEIGHT 92.0f
 #define MAZE_PADDING 24.0f
+#define HUD_MAZE_GAP 15.0f
 #define CONTEST_BYTE_LIMIT 1474560LL
 
 #define CELL_WALL 0
@@ -51,8 +53,10 @@
 #define PLAYER_SHOT_VOLUME 0.7f
 #define ENEMY_SHOT_VOLUME 0.65f
 #define PLAYER_RELOAD_VOLUME 0.75f
+#define PLAYER_MOVE_VOLUME 0.72f
 #define VICTORY_VOLUME 0.8f
 #define GAME_OVER_VOLUME 0.8f
+#define AUDIO_SAMPLE_RATE 22050
 #define UI_FONT_PATH "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
 #define UI_FONT_BAKE_SIZE 48
 #define UI_MAX_CODEPOINTS 512
@@ -79,6 +83,13 @@ Color MAZE_WALL_COLOR = { 20, 22, 36, 255 };
 Color MAZE_PATH_COLOR = { 235, 240, 250, 255 };
 Color MAZE_SHADOW_COLOR = { 8, 9, 18, 255 };
 Color MAZE_EXIT_COLOR = { 60, 230, 130, 255 };
+
+typedef struct MazeLayout
+{
+    Vector2 offset;
+    Vector2 scale;
+    float drawScale;
+} MazeLayout;
 
 float GetUIScale(void);
 
@@ -107,7 +118,17 @@ float GetHudPanelWidth(void)
 float GetMazeLeftReservedWidth(void)
 {
     if (IsCompactLayout()) return 0.0f;
-    return GetHudPanelWidth() + (10.0f * GetUIScale());
+    return (10.0f * GetUIScale()) + GetHudPanelWidth() + HUD_MAZE_GAP;
+}
+
+float GetMazeTopBound(void)
+{
+    return (66.0f * GetUIScale()) + HUD_MAZE_GAP;
+}
+
+float GetMazeBottomBound(void)
+{
+    return (float)GetScreenHeight() - (22.0f * GetUIScale());
 }
 
 float GetHudRightPanelWidth(void)
@@ -123,80 +144,60 @@ float GetHudRightPanelWidth(void)
     return fminf(330.0f * scale, w * 0.17f);
 }
 
-float GetMazeScale(void)
+Rectangle GetMazeAvailableRect(void)
 {
-    float mazeWidth = (float)(GRID_WIDTH * TILE_SIZE);
-    float mazeHeight = (float)(GRID_HEIGTH * TILE_SIZE);
     float ui = GetUIScale();
 
     if (IsCompactLayout())
     {
-        /* Compact mode: the maze gets the entire central area. HUD panels
-         * are drawn above/below it instead of stealing horizontal space. */
         float horizontalPadding = 10.0f * ui;
-        float topSpace = 162.0f * ui;
-        float bottomSpace = 108.0f * ui;
-        float availableWidth = (float)GetScreenWidth() - horizontalPadding * 2.0f;
-        float availableHeight = (float)GetScreenHeight() - topSpace - bottomSpace;
-        float scaleX = availableWidth / mazeWidth;
-        float scaleY = availableHeight / mazeHeight;
-        return fmaxf(0.42f, fminf(fminf(scaleX, scaleY), 1.85f));
+        float topSpace = (78.0f * ui) + (74.0f * ui) + HUD_MAZE_GAP;
+        float bottomSpace = (92.0f * ui) + HUD_MAZE_GAP;
+
+        return (Rectangle){
+            horizontalPadding,
+            topSpace,
+            fmaxf(1.0f, (float)GetScreenWidth() - horizontalPadding * 2.0f),
+            fmaxf(1.0f, (float)GetScreenHeight() - topSpace - bottomSpace)
+        };
     }
 
-    float sideGap = 20.0f * ui;
-    float availableWidth = (float)GetScreenWidth()
-        - GetMazeLeftReservedWidth()
-        - GetHudRightPanelWidth()
-        - sideGap;
-    float availableHeight = (float)GetScreenHeight()
-        - (70.0f * ui)
-        - (22.0f * ui);
-    float scaleX = availableWidth / mazeWidth;
-    float scaleY = availableHeight / mazeHeight;
+    float mazeLeftBound = GetMazeLeftReservedWidth();
+    float mazeRightBound = (float)GetScreenWidth() - (10.0f * ui) - GetHudRightPanelWidth() - HUD_MAZE_GAP;
 
-    /* The floor here must never exceed what the available space can
-     * actually fit - a fixed 0.65 floor used to win over a smaller
-     * computed scale, which is exactly why the maze kept rendering at
-     * its old size and drawing over the HUD panels once they got wider.
-     * Clamping the floor itself to availableWidth/Height fixes that: the
-     * maze always shrinks to fit first, and only grows up to 1.65x when
-     * there's genuinely room to spare. */
-    float fitScale = fminf(scaleX, scaleY);
-    float minScale = fminf(0.65f, fmaxf(0.35f, fitScale));
-    return fmaxf(minScale, fminf(fitScale, 1.85f));
+    return (Rectangle){
+        mazeLeftBound,
+        GetMazeTopBound(),
+        fmaxf(1.0f, mazeRightBound - mazeLeftBound),
+        fmaxf(1.0f, GetMazeBottomBound() - GetMazeTopBound())
+    };
+}
+
+MazeLayout GetMazeLayout(void)
+{
+    Rectangle available = GetMazeAvailableRect();
+    float mazeFrameWidth = (float)((GRID_WIDTH + 0.7f) * TILE_SIZE);
+    float mazeFrameHeight = (float)((GRID_HEIGTH + 0.7f) * TILE_SIZE);
+    MazeLayout layout = { 0 };
+
+    layout.scale.x = fmaxf(0.25f, available.width / mazeFrameWidth);
+    layout.scale.y = fmaxf(0.25f, available.height / mazeFrameHeight);
+    layout.drawScale = fminf(layout.scale.x, layout.scale.y);
+    layout.offset.x = available.x + ((float)TILE_SIZE * layout.scale.x * 0.35f);
+    layout.offset.y = available.y + ((float)TILE_SIZE * layout.scale.y * 0.35f);
+
+    return layout;
+}
+
+float GetMazeScale(void)
+{
+    return GetMazeLayout().drawScale;
 }
 
 Vector2 GetMazeOffset(float scale)
 {
-    float mazeWidth = (float)(GRID_WIDTH * TILE_SIZE) * scale;
-    float mazeHeight = (float)(GRID_HEIGTH * TILE_SIZE) * scale;
-    float ui = GetUIScale();
-
-    if (IsCompactLayout())
-    {
-        float topSpace = 162.0f * ui;
-        float bottomSpace = 108.0f * ui;
-        return (Vector2){
-            ((float)GetScreenWidth() - mazeWidth) * 0.5f,
-            topSpace + (((float)GetScreenHeight() - topSpace - bottomSpace) - mazeHeight) * 0.5f
-        };
-    }
-
-    float leftReserved = GetMazeLeftReservedWidth();
-    float rightReserved = GetHudRightPanelWidth();
-    float sideGap = 20.0f * ui;
-    float availableWidth = (float)GetScreenWidth() - leftReserved - rightReserved - sideGap;
-    /* Clamped to >= 0: with the scale now always fit to availableWidth
-     * (see GetMazeScale), freeWidth should never go negative, but this
-     * guards against ever pushing the maze left edge into the HUD panel
-     * if screen math rounds awkwardly at extreme window sizes. */
-    float freeWidth = fmaxf(0.0f, availableWidth - mazeWidth);
-    float freeHeight = fmaxf(0.0f, (float)GetScreenHeight() - (70.0f * ui) - mazeHeight);
-
-    return (Vector2){
-        leftReserved + (sideGap * 0.5f) + (freeWidth * 0.5f),
-        (70.0f * ui) + (freeHeight * 0.5f)
-    };
+    (void)scale;
+    return GetMazeLayout().offset;
 }
 
 Vector2 WorldToScreenPosition(Vector2 worldPosition, float scale, Vector2 offset)
@@ -205,6 +206,14 @@ Vector2 WorldToScreenPosition(Vector2 worldPosition, float scale, Vector2 offset
     screenPosition.x = offset.x + (worldPosition.x * scale);
     screenPosition.y = offset.y + (worldPosition.y * scale);
     return screenPosition;
+}
+
+Vector2 WorldToScreenPositionLayout(Vector2 worldPosition, MazeLayout layout)
+{
+    return (Vector2){
+        layout.offset.x + (worldPosition.x * layout.scale.x),
+        layout.offset.y + (worldPosition.y * layout.scale.y)
+    };
 }
 
 Rectangle GetMazeScreenRect(float scale, Vector2 offset)
@@ -239,9 +248,30 @@ float GetContestUsagePercent(long long usedBytes)
     return ((float)usedBytes / (float)CONTEST_BYTE_LIMIT) * 100.0f;
 }
 
+long long GetRuntimeAssetSizeBytes(void)
+{
+    return 0;
+}
+
 void UpdateBuildMetrics(const char *executablePath)
 {
     executableSizeBytes = GetFileSizeBytes(executablePath);
+
+    if (executableSizeBytes < 0)
+    {
+        executableSizeBytes = GetFileSizeBytes("./bytemaze");
+    }
+
+    if (executableSizeBytes < 0)
+    {
+        executableSizeBytes = GetFileSizeBytes("./bytemaze.exe");
+    }
+
+    if (executableSizeBytes > 0)
+    {
+        executableSizeBytes += GetRuntimeAssetSizeBytes();
+    }
+
     executableUsagePercent = GetContestUsagePercent(executableSizeBytes);
 }
 
@@ -390,10 +420,10 @@ Enemy blueEnemies[BLUE_ENEMY_COUNT];
 Enemy bossEnemy;
 Bullet bullets[MAX_BULLETS];
 bool playerAlive = true;
-Music backgroundMusic;
 Sound playerShotSound;
 Sound enemyShotSound;
 Sound playerReloadSound;
+Sound playerMoveSound;
 Sound victorySound;
 Sound gameOverSound;
 bool gameAudioLoaded = false;
@@ -404,6 +434,8 @@ bool uiLatinFontLoaded = false;
 Color currentDrawColor = WHITE;
 
 Player player;
+Vector2 lastPlayerMoveDirection = { 0 };
+bool hasLastPlayerMoveDirection = false;
 
 typedef enum GamePhase
 {
@@ -480,6 +512,7 @@ int tutorialRound = 1;
 int officialRound = 1;
 int bestOfficialRound = 1;
 bool roundNeedsSetup = true;
+bool waitingForVictorySound = false;
 bool playerStartAuraVisible = true;
 
 void SpawnBullet(Vector2 position, Vector2 direction, float speed, bool fromPlayer);
@@ -492,6 +525,7 @@ float GetBossSpeedBonus(void);
 float GetBossShootCooldown(void);
 float GetBossFarSpeedMultiplier(void);
 void InitGameAudio(void);
+Sound CreateSynthSound(int soundType);
 void UpdateGameAudio(void);
 void ShutdownGameAudio(void);
 void InitUIFont(void);
@@ -548,7 +582,7 @@ const char *uiText[LANGUAGE_COUNT][TEXT_COUNT] = {
         [TEXT_HUD_STATUS_TITLE] = "STATUS DO SISTEMA",
         [TEXT_HUD_MAIN_DATA] = "DADOS PRINCIPAIS",
         [TEXT_HUD_LOG_TITLE] = "LOG DE DADOS",
-        [TEXT_HUD_EXECUTABLE] = "EXECUTAVEL",
+        [TEXT_HUD_EXECUTABLE] = "PACOTE",
         [TEXT_HUD_BYTES] = "bytes",
         [TEXT_HUD_LIMIT] = "LIMITE",
         [TEXT_HUD_VITAL_TITLE] = "VITAL DO NUCLEO",
@@ -588,7 +622,7 @@ const char *uiText[LANGUAGE_COUNT][TEXT_COUNT] = {
         [TEXT_HUD_STATUS_TITLE] = "ESTADO DEL SISTEMA",
         [TEXT_HUD_MAIN_DATA] = "DATOS PRINCIPALES",
         [TEXT_HUD_LOG_TITLE] = "REGISTRO DE DATOS",
-        [TEXT_HUD_EXECUTABLE] = "EJECUTABLE",
+        [TEXT_HUD_EXECUTABLE] = "PAQUETE",
         [TEXT_HUD_BYTES] = "bytes",
         [TEXT_HUD_LIMIT] = "LIMITE",
         [TEXT_HUD_VITAL_TITLE] = "VITAL DEL NUCLEO",
@@ -628,7 +662,7 @@ const char *uiText[LANGUAGE_COUNT][TEXT_COUNT] = {
         [TEXT_HUD_STATUS_TITLE] = "SYSTEM STATUS",
         [TEXT_HUD_MAIN_DATA] = "MAIN DATA",
         [TEXT_HUD_LOG_TITLE] = "DATA LOG",
-        [TEXT_HUD_EXECUTABLE] = "EXECUTABLE",
+        [TEXT_HUD_EXECUTABLE] = "PACKAGE",
         [TEXT_HUD_BYTES] = "bytes",
         [TEXT_HUD_LIMIT] = "LIMIT",
         [TEXT_HUD_VITAL_TITLE] = "CORE VITALS",
@@ -668,7 +702,7 @@ const char *uiText[LANGUAGE_COUNT][TEXT_COUNT] = {
         [TEXT_HUD_STATUS_TITLE] = "시스템 상태",
         [TEXT_HUD_MAIN_DATA] = "주요 데이터",
         [TEXT_HUD_LOG_TITLE] = "데이터 로그",
-        [TEXT_HUD_EXECUTABLE] = "실행 파일",
+        [TEXT_HUD_EXECUTABLE] = "패키지",
         [TEXT_HUD_BYTES] = "바이트",
         [TEXT_HUD_LIMIT] = "제한",
         [TEXT_HUD_VITAL_TITLE] = "코어 생명 신호",
@@ -692,12 +726,12 @@ const char *T(TextId id)
 
 Font GetUIFont(void)
 {
-    return uiFontLoaded ? uiFont : GetFontDefault();
+    return GetFontDefault();
 }
 
 Font GetUILatinFont(void)
 {
-    return uiLatinFontLoaded ? uiLatinFont : GetUIFont();
+    return GetFontDefault();
 }
 
 /* True: this codepoint belongs to the Korean Hangul ranges and must use
@@ -710,32 +744,10 @@ bool IsHangulCodepoint(int codepoint)
     return false;
 }
 
-/* UI_FONT_PATH only exists on some Linux distros. Try it first, then fall
- * back to the common Korean-capable fonts shipped with Windows and macOS,
- * so glyphs render correctly instead of falling back to the default font
- * (which has no CJK glyphs and draws "?" for every Korean character).
- *
- * The relative candidates ("src/assets/...", "assets/...") only resolve
- * when the game happens to be launched with that folder as the current
- * working directory. Double-clicking the executable, or launching it from
- * a shortcut/launcher, almost always uses a different working directory,
- * which is why Korean silently fell back to "?" glyphs even when the font
- * file was sitting right next to the .exe. BuildFontCandidatePaths()
- * below rewrites every relative candidate into an absolute path anchored
- * to the executable's own folder (GetApplicationDirectory()), so the font
- * is found regardless of how the game is launched. */
+/* Try common system fonts first and fall back to raylib's built-in font.
+ * Shipping a CJK font would exceed the contest limit by itself. */
 static const char *uiFontRelativeCandidates[] = {
-    "NanumGothic-Regular.ttf",
-    "fonts/NanumGothic-Regular.ttf",
-    "src/assets/fonts/NanumGothic-Regular.ttf",
-    "assets/fonts/NanumGothic-Regular.ttf",
     UI_FONT_PATH,
-    "src/assets/fonts/NotoSansCJK-Regular.ttc",
-    "src/assets/fonts/NotoSansKR-Regular.otf",
-    "src/assets/fonts/NotoSansKR-Regular.ttf",
-    "assets/fonts/NotoSansCJK-Regular.ttc",
-    "assets/fonts/NotoSansKR-Regular.otf",
-    "assets/fonts/NotoSansKR-Regular.ttf",
     "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/truetype/noto/NotoSansKR-Regular.otf",
     "/usr/share/fonts/truetype/noto/NotoSansKR-Regular.ttf",
@@ -756,8 +768,6 @@ static const char *uiFontRelativeCandidates[] = {
 static const char *uiLatinFontRelativeCandidates[] = {
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-    "src/assets/fonts/DejaVuSans.ttf",
-    "assets/fonts/DejaVuSans.ttf",
     NULL
 };
 
@@ -962,9 +972,6 @@ void InitUIFont(void)
 
     if (uiFontLoaded)
     {
-        /* Bilinear filtering (smooth, not point-sampled) keeps Hangul
-         * strokes clean and readable when the HUD upscales this font -
-         * Korean has no "chunky pixel-art" goal, unlike the Latin font. */
         SetTextureFilter(uiFont.texture, TEXTURE_FILTER_BILINEAR);
     }
 
@@ -1609,14 +1616,14 @@ Vector2 MeasureTextStrongSpaced(const char *text, int fontSize, float spacing)
 
 void DrawMazeGrid(void)
 {
-    float scale = GetMazeScale();
-    float drawTileSize = (float)TILE_SIZE * scale;
-    Vector2 offset = GetMazeOffset(scale);
+    MazeLayout layout = GetMazeLayout();
+    float drawTileWidth = (float)TILE_SIZE * layout.scale.x;
+    float drawTileHeight = (float)TILE_SIZE * layout.scale.y;
     Rectangle mazeFrame = {
-        offset.x - (drawTileSize * 0.35f),
-        offset.y - (drawTileSize * 0.35f),
-        (GRID_WIDTH * drawTileSize) + (drawTileSize * 0.7f),
-        (GRID_HEIGTH * drawTileSize) + (drawTileSize * 0.7f)
+        layout.offset.x - (drawTileWidth * 0.35f),
+        layout.offset.y - (drawTileHeight * 0.35f),
+        (GRID_WIDTH * drawTileWidth) + (drawTileWidth * 0.7f),
+        (GRID_HEIGTH * drawTileHeight) + (drawTileHeight * 0.7f)
     };
 
     DrawRectangleRounded(mazeFrame, 0.05f, 10, MAZE_SHADOW_COLOR);
@@ -1656,17 +1663,17 @@ void DrawMazeGrid(void)
                 cellColor = (Color){ 6, 6, 6, 255 };
             }
 
-            Vector2 position = { offset.x + ((float)x * drawTileSize), offset.y + ((float)y * drawTileSize) };
-            Vector2 size = { drawTileSize, drawTileSize };
+            Vector2 position = { layout.offset.x + ((float)x * drawTileWidth), layout.offset.y + ((float)y * drawTileHeight) };
+            Vector2 size = { drawTileWidth, drawTileHeight };
             DrawRectangleV(position, size, cellColor);
 
             if (grid[y][x] == CELL_PATH && IsWorldPositionVisible(cellCenter))
             {
-                DrawRectangleLinesEx((Rectangle){ position.x, position.y, size.x, size.y }, 1.0f, Fade(LIGHTGRAY, 0.08f));
+                DrawRectangleLinesEx((Rectangle){ position.x, position.y, size.x, size.y }, fmaxf(1.0f, layout.drawScale), Fade(LIGHTGRAY, 0.08f));
             }
             else if (grid[y][x] == CELL_EXIT && IsWorldPositionVisible(cellCenter))
             {
-                DrawRectangleLinesEx((Rectangle){ position.x, position.y, size.x, size.y }, 2.0f, RAYWHITE);
+                DrawRectangleLinesEx((Rectangle){ position.x, position.y, size.x, size.y }, fmaxf(2.0f, 2.0f * layout.drawScale), RAYWHITE);
             }
         }
     }
@@ -1908,6 +1915,8 @@ void InitPlayer(void)
     player.facingAngle = 0.0f;
     player.position.x = TILE_SIZE * 1.5f;
     player.position.y = TILE_SIZE * 1.5f;
+    lastPlayerMoveDirection = (Vector2){ 0 };
+    hasLastPlayerMoveDirection = false;
     playerStartAuraVisible = true;
 }
 
@@ -1923,6 +1932,7 @@ void UpdatePlayer(void)
     if (movement.x != 0.0f || movement.y != 0.0f)
     {
         playerStartAuraVisible = false;
+        Vector2 previousPosition = player.position;
 
         float length = sqrtf(movement.x * movement.x + movement.y * movement.y);
         movement.x /= length;
@@ -1930,6 +1940,23 @@ void UpdatePlayer(void)
         player.facingAngle = atan2f(movement.y, movement.x);
 
         MovePlayerWithCollision(movement, player.speed * GetStableFrameTime());
+
+        bool playerMoved = fabsf(player.position.x - previousPosition.x) > 0.01f ||
+                           fabsf(player.position.y - previousPosition.y) > 0.01f;
+
+        if (playerMoved)
+        {
+            float directionDot = (movement.x * lastPlayerMoveDirection.x) +
+                                 (movement.y * lastPlayerMoveDirection.y);
+
+            if (gameAudioLoaded && hasLastPlayerMoveDirection && directionDot < 0.99f)
+            {
+                PlaySound(playerMoveSound);
+            }
+
+            lastPlayerMoveDirection = movement;
+            hasLastPlayerMoveDirection = true;
+        }
     }
 }
 
@@ -2374,6 +2401,7 @@ void SetupRound(void)
     playerAlive = true;
     playerHealth = PLAYER_MAX_HEALTH;
     playerDamageCooldown = 0.0f;
+    waitingForVictorySound = false;
     GenerateMaze();
     InitPlayer();
     InitBullets();
@@ -2524,6 +2552,7 @@ bool ShouldShowRoundInfo(void)
 
 void StartCurrentStage(void)
 {
+    waitingForVictorySound = false;
     roundNeedsSetup = true;
     gamePhase = ShouldShowRoundInfo() ? PHASE_INFO : PHASE_PLAYING;
 }
@@ -3230,23 +3259,92 @@ float GetNearestDangerousEnemyDistance(void)
     return nearestDistance;
 }
 
+Sound CreateSynthSound(int soundType)
+{
+    float duration = 0.14f;
+    if (soundType == 2) duration = 0.28f;
+    if (soundType == 4) duration = 1.7f;
+    if (soundType == 5) duration = 0.8f;
+
+    int sampleCount = (int)((float)AUDIO_SAMPLE_RATE * duration);
+    int16_t *samples = (int16_t *)malloc((size_t)sampleCount * sizeof(int16_t));
+
+    if (samples == NULL)
+    {
+        static int16_t silence = 0;
+        Wave emptyWave = { 1, AUDIO_SAMPLE_RATE, 16, 1, &silence };
+        return LoadSoundFromWave(emptyWave);
+    }
+
+    for (int i = 0; i < sampleCount; i++)
+    {
+        float t = (float)i / (float)AUDIO_SAMPLE_RATE;
+        float p = (float)i / (float)sampleCount;
+        float envelope = fminf(1.0f, p * 18.0f) * (1.0f - p);
+        float value = 0.0f;
+
+        if (soundType == 0)
+        {
+            float freq = 980.0f - (520.0f * p);
+            value = sinf(t * freq * 6.2831853f) * envelope;
+        }
+        else if (soundType == 1)
+        {
+            float freq = 420.0f + (180.0f * sinf(p * 18.0f));
+            value = sinf(t * freq * 6.2831853f) * envelope;
+        }
+        else if (soundType == 2)
+        {
+            float step = (p < 0.33f) ? 520.0f : ((p < 0.66f) ? 700.0f : 880.0f);
+            value = sinf(t * step * 6.2831853f) * envelope;
+        }
+        else if (soundType == 3)
+        {
+            value = sinf(t * 180.0f * 6.2831853f) * envelope;
+        }
+        else if (soundType == 4)
+        {
+            float note = (p < 0.25f) ? 523.25f : ((p < 0.5f) ? 659.25f : ((p < 0.75f) ? 783.99f : 1046.5f));
+            float shimmer = sinf(t * note * 6.2831853f) + (0.35f * sinf(t * note * 2.0f * 6.2831853f));
+            value = shimmer * envelope;
+        }
+        else
+        {
+            float freq = 220.0f - (120.0f * p);
+            value = sinf(t * freq * 6.2831853f) * envelope;
+        }
+
+        samples[i] = (int16_t)(fmaxf(-1.0f, fminf(1.0f, value * 0.55f)) * 32767.0f);
+    }
+
+    Wave wave = {
+        (unsigned int)sampleCount,
+        AUDIO_SAMPLE_RATE,
+        16,
+        1,
+        samples
+    };
+    Sound sound = LoadSoundFromWave(wave);
+    free(samples);
+    return sound;
+}
+
 void InitGameAudio(void)
 {
     InitAudioDevice();
-    backgroundMusic = LoadMusicStream("src/assets/audio/guitar-loops.wav");
-    playerShotSound = LoadSound("src/assets/audio/laser-shot-player.wav");
-    enemyShotSound = LoadSound("src/assets/audio/aser-shot-enemy.wav");
-    playerReloadSound = LoadSound("src/assets/audio/recargapistola.wav");
-    victorySound = LoadSound("src/assets/audio/victory.wav");
-    gameOverSound = LoadSound("src/assets/audio/game_over.wav");
+    playerShotSound = CreateSynthSound(0);
+    enemyShotSound = CreateSynthSound(1);
+    playerReloadSound = CreateSynthSound(2);
+    playerMoveSound = CreateSynthSound(3);
+    victorySound = CreateSynthSound(4);
+    gameOverSound = CreateSynthSound(5);
 
-    SetMusicVolume(backgroundMusic, MUSIC_BASE_VOLUME);
     SetSoundVolume(playerShotSound, PLAYER_SHOT_VOLUME);
     SetSoundVolume(enemyShotSound, ENEMY_SHOT_VOLUME);
     SetSoundVolume(playerReloadSound, PLAYER_RELOAD_VOLUME);
+    SetSoundVolume(playerMoveSound, PLAYER_MOVE_VOLUME);
     SetSoundVolume(victorySound, VICTORY_VOLUME);
     SetSoundVolume(gameOverSound, GAME_OVER_VOLUME);
-    PlayMusicStream(backgroundMusic);
     gameAudioLoaded = true;
 }
 
@@ -3255,19 +3353,6 @@ void UpdateGameAudio(void)
     if (!gameAudioLoaded)
     {
         return;
-    }
-
-    UpdateMusicStream(backgroundMusic);
-
-    if (gamePhase == PHASE_PLAYING && playerAlive)
-    {
-        float nearestDistance = GetNearestDangerousEnemyDistance();
-        float danger = 1.0f - fminf(nearestDistance / MUSIC_NEAR_ENEMY_DISTANCE, 1.0f);
-        SetMusicVolume(backgroundMusic, MUSIC_BASE_VOLUME + (danger * (MUSIC_NEAR_ENEMY_VOLUME - MUSIC_BASE_VOLUME)));
-    }
-    else
-    {
-        SetMusicVolume(backgroundMusic, MUSIC_BASE_VOLUME);
     }
 }
 
@@ -3278,10 +3363,10 @@ void ShutdownGameAudio(void)
         return;
     }
 
-    UnloadMusicStream(backgroundMusic);
     UnloadSound(playerShotSound);
     UnloadSound(enemyShotSound);
     UnloadSound(playerReloadSound);
+    UnloadSound(playerMoveSound);
     UnloadSound(victorySound);
     UnloadSound(gameOverSound);
     CloseAudioDevice();
@@ -3956,9 +4041,9 @@ void DrawGameOverOverlay(void)
 
 void DrawPlayer(void)
 {
-    float scale = GetMazeScale();
-    Vector2 offset = GetMazeOffset(scale);
-    Vector2 center = WorldToScreenPosition(player.position, scale, offset);
+    MazeLayout layout = GetMazeLayout();
+    float scale = layout.drawScale;
+    Vector2 center = WorldToScreenPositionLayout(player.position, layout);
     float drawRadius = fmaxf(player.radius * scale * 1.1f, 8.0f);
     Color playerCore = (Color){ 255, 185, 55, 255 };
     Color playerEdge = (Color){ 255, 235, 200, 255 };
@@ -3999,8 +4084,8 @@ void DrawPlayer(void)
 
 void DrawEnemies(void)
 {
-    float scale = GetMazeScale();
-    Vector2 offset = GetMazeOffset(scale);
+    MazeLayout layout = GetMazeLayout();
+    float scale = layout.drawScale;
 
     for (int i = 0; i < RED_ENEMY_COUNT; i++)
     {
@@ -4009,7 +4094,7 @@ void DrawEnemies(void)
             continue;
         }
 
-        Vector2 center = WorldToScreenPosition(redEnemies[i].position, scale, offset);
+        Vector2 center = WorldToScreenPositionLayout(redEnemies[i].position, layout);
         float drawRadius = fmaxf(redEnemies[i].radius * scale, 6.0f);
         Color redBody = RED;
 
@@ -4029,7 +4114,7 @@ void DrawEnemies(void)
             continue;
         }
 
-        Vector2 center = WorldToScreenPosition(blueEnemies[i].position, scale, offset);
+        Vector2 center = WorldToScreenPositionLayout(blueEnemies[i].position, layout);
         float drawRadius = fmaxf(blueEnemies[i].radius * scale, 7.0f);
         Color pinkColor = (Color){ 255, 45, 165, 255 };
         Color bodyColor = pinkColor;
@@ -4061,7 +4146,7 @@ void DrawEnemies(void)
 
     if (bossEnemy.active)
     {
-        Vector2 bossCenter = WorldToScreenPosition(bossEnemy.position, scale, offset);
+        Vector2 bossCenter = WorldToScreenPositionLayout(bossEnemy.position, layout);
         float bossRadius = fmaxf(bossEnemy.radius * scale, 8.0f);
         Vector2 bossPos = { bossCenter.x - bossRadius, bossCenter.y - bossRadius };
         Vector2 bossSize = { bossRadius * 2.0f, bossRadius * 2.0f };
@@ -4082,8 +4167,8 @@ void DrawEnemies(void)
 
 void DrawBullets(void)
 {
-    float scale = GetMazeScale();
-    Vector2 offset = GetMazeOffset(scale);
+    MazeLayout layout = GetMazeLayout();
+    float scale = layout.drawScale;
 
     for (int i = 0; i < MAX_BULLETS; i++)
     {
@@ -4092,7 +4177,7 @@ void DrawBullets(void)
             continue;
         }
 
-        Vector2 center = WorldToScreenPosition(bullets[i].position, scale, offset);
+        Vector2 center = WorldToScreenPositionLayout(bullets[i].position, layout);
         float drawRadius = fmaxf(bullets[i].radius * scale, 3.0f);
         Color bulletColor = bullets[i].fromPlayer ? (Color){ 255, 190, 65, 255 } : SKYBLUE;
 
@@ -4114,16 +4199,16 @@ void DrawVisibilityEffects(void)
         return;
     }
 
-    float scale = GetMazeScale();
-    Vector2 offset = GetMazeOffset(scale);
-    Vector2 playerCenter = WorldToScreenPosition(player.position, scale, offset);
+    MazeLayout layout = GetMazeLayout();
+    float scale = layout.drawScale;
+    Vector2 playerCenter = WorldToScreenPositionLayout(player.position, layout);
     float playerAuraRadius = TILE_SIZE * scale * 2.9f;
 
     DrawCircleV(playerCenter, playerAuraRadius, Fade(GOLD, 0.07f));
 
     if (currentRoundConfig.flashlightEnabled && flashlightOn)
     {
-        Vector2 flashlightCenter = WorldToScreenPosition(GetFlashlightCenter(), scale, offset);
+        Vector2 flashlightCenter = WorldToScreenPositionLayout(GetFlashlightCenter(), layout);
         DrawCircleV(flashlightCenter, TILE_SIZE * scale * 4.8f, Fade((Color){ 255, 245, 180, 255 }, 0.13f));
     }
 }
@@ -4491,38 +4576,52 @@ int main(int argc, char *argv[])
 
             if (playerAlive)
             {
-                if (playerDamageCooldown > 0.0f)
+                if (waitingForVictorySound)
                 {
-                    playerDamageCooldown -= GetFrameTime();
-                    if (playerDamageCooldown < 0.0f)
+                    if (!gameAudioLoaded || !IsSoundPlaying(victorySound))
                     {
-                        playerDamageCooldown = 0.0f;
+                        AdvanceToNextStage();
                     }
                 }
-
-                UpdatePlayer();
-                UpdatePlayerShooting();
-                UpdatePlayerReload();
-                UpdateFlashlight();
-                for (int i = 0; i < RED_ENEMY_COUNT; i++)
+                else
                 {
-                    UpdateRedEnemy(&redEnemies[i]);
-                }
-                for (int i = 0; i < BLUE_ENEMY_COUNT; i++)
-                {
-                    UpdateBlueEnemy(&blueEnemies[i]);
-                }
-                UpdateBossEnemy();
-                UpdateBullets();
-                ApplyEnemyTouchDamage();
-
-                if (DidPlayerReachExit())
-                {
-                    if (gameAudioLoaded)
+                    if (playerDamageCooldown > 0.0f)
                     {
-                        PlaySound(victorySound);
+                        playerDamageCooldown -= GetFrameTime();
+                        if (playerDamageCooldown < 0.0f)
+                        {
+                            playerDamageCooldown = 0.0f;
+                        }
                     }
-                    AdvanceToNextStage();
+
+                    UpdatePlayer();
+                    UpdatePlayerShooting();
+                    UpdatePlayerReload();
+                    UpdateFlashlight();
+                    for (int i = 0; i < RED_ENEMY_COUNT; i++)
+                    {
+                        UpdateRedEnemy(&redEnemies[i]);
+                    }
+                    for (int i = 0; i < BLUE_ENEMY_COUNT; i++)
+                    {
+                        UpdateBlueEnemy(&blueEnemies[i]);
+                    }
+                    UpdateBossEnemy();
+                    UpdateBullets();
+                    ApplyEnemyTouchDamage();
+
+                    if (DidPlayerReachExit())
+                    {
+                        if (gameAudioLoaded)
+                        {
+                            PlaySound(victorySound);
+                            waitingForVictorySound = true;
+                        }
+                        else
+                        {
+                            AdvanceToNextStage();
+                        }
+                    }
                 }
             }
         }
