@@ -1,8 +1,9 @@
 # 🌀 ByteMaze
 
-## 🇺🇸 English
 
 **An action-survival game set in procedural mazes, focused on precision, strategy, and extreme size optimization.**
+> **Um jogo de ação e sobrevivência em labirintos procedurais com foco em precisão, estratégia e otimização extrema.**
+
 
 [![1.44MB Game Dev Contest](https://img.shields.io/badge/Contest-1.44MB%20Game%20Dev-8A2BE2?style=for-the-badge&logo=itchio&logoColor=white)](https://2pgarcade.com/contest-144mb.html)
 [![Language](https://img.shields.io/badge/C-00599C?style=for-the-badge&logo=c&logoColor=white)](https://en.wikipedia.org/wiki/C_(programming_language))
@@ -33,6 +34,9 @@
   - [Desenvolvedora & Créditos](#-desenvolvedora--créditos)
 
 ---
+
+## 🇺🇸 English
+
 
 ## 💡 About the Project
 
@@ -177,15 +181,6 @@ ByteMaze/
 ---
 
 ## 🇧🇷 Português (Brasil)
-
-**Um jogo de ação e sobrevivência em labirintos procedurais com foco em precisão, estratégia e otimização extrema.**
-
-[![1.44MB Game Dev Contest](https://img.shields.io/badge/Contest-1.44MB%20Game%20Dev-8A2BE2?style=for-the-badge&logo=itchio&logoColor=white)](https://2pgarcade.com/contest-144mb.html)
-[![Linguagem](https://img.shields.io/badge/C-00599C?style=for-the-badge&logo=c&logoColor=white)](https://en.wikipedia.org/wiki/C_(programming_language))
-[![Engine](https://img.shields.io/badge/raylib-000000?style=for-the-badge&logo=raylib&logoColor=white)](https://www.raylib.com/)
-[![Licença](https://img.shields.io/badge/License-zlib%2Flibpng-green?style=for-the-badge)](raylib/LICENSE)
-
----
 
 ## 💡 Sobre o Projeto
 
