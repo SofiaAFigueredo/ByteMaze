@@ -1,4 +1,3 @@
-
 # ByteMaze
 
 [![1.44MB Game Dev Contest](https://img.shields.io/badge/Contest-1.44MB%20Game%20Dev-blueviolet)](https://2pgarcade.com/contest-144mb.html)
@@ -14,7 +13,7 @@
 
 O jogo foi desenvolvido para o **[1.44MB Game Dev Contest](https://2pgarcade.com/contest-144mb.html)**, organizado pela **2P Game Arcade**. O grande desafio da competição é fazer um jogo moderno, completo e divertido caber no espaço histórico de um disquete de 3.5" (1.44 MB).
 
-### Directrizes e Restrições Atendidas:
+### Diretrizes e Restrições Atendidas:
 * **Tamanho Máximo Total:** $\le 1.474.560 \text{ bytes}$ após descompactar o pacote final.
 * **Stand-alone / Offline:** Executável independente que roda localmente sem requisições web ou servidores externos.
 * **Engine & Assets Integrados:** O tamanho final contabiliza o binário gerado, a runtime e todos os assets gráficos e de fonte inclusos.
@@ -37,7 +36,7 @@ O jogo foi desenvolvido para o **[1.44MB Game Dev Contest](https://2pgarcade.com
 
 ---
 
-## ⚙️ Mecanicas do Jogo
+## ⚙️ Mecânicas do Jogo
 
 - **Labirintos Procedurais:** Cada round gera uma estrutura única de caminhos e obstáculos.
 - **Condição de Vitória:** Alcance e pise no **bloco verde** para avançar para o próximo nível.
@@ -76,26 +75,20 @@ A otimização de espaço foi fundamental no desenvolvimento do ByteMaze. A veri
 ### Comandos de Build
 
 1. Clone o repositório com os submódulos:
-   ```sh
-   git clone --recursive [https://github.com/SofiaAFigueredo/ByteMaze.git](https://github.com/SofiaAFigueredo/ByteMaze.git)
-   cd ByteMaze
-
+```sh
+git clone --recursive https://github.com/SofiaAFigueredo/ByteMaze.git
+cd ByteMaze
 ```
 
 2. Gere a versão de release otimizada:
 ```sh
 make release
-
 ```
-
 
 3. Verifique se o pacote cumpre as regras de tamanho da competição:
 ```sh
 make size
-
 ```
-
-
 
 ---
 
@@ -108,7 +101,6 @@ make size
 │   └── assets/
 │       └── fonts/             # Subset de fonte otimizado (NotoSansKR)
 └── raylib/                    # Submódulo do Raylib
-
 ```
 
 > 📌 **Aviso:** O arquivo `bytemaze_save.dat` é utilizado apenas para o progresso local do jogador e **não** deve ser incluído na submissão oficial para a 2P Game Arcade.
@@ -126,4 +118,4 @@ make size
 
 ## 📜 Licença
 
-Este projeto faz uso da biblioteca de código aberto **raylib**. Consulte os termos de uso em [`raylib/LICENSE`](https://www.google.com/search?q=raylib/LICENSE).
+Este projeto faz uso da biblioteca de código aberto **raylib**. Consulte os termos de uso em [`raylib/LICENSE`](raylib/LICENSE).
