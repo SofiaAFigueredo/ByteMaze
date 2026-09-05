@@ -1,11 +1,36 @@
 # 🌀 ByteMaze
 
+## 🇺🇸 English
+
 **An action-survival game set in procedural mazes, focused on precision, strategy, and extreme size optimization.**
 
 [![1.44MB Game Dev Contest](https://img.shields.io/badge/Contest-1.44MB%20Game%20Dev-8A2BE2?style=for-the-badge&logo=itchio&logoColor=white)](https://2pgarcade.com/contest-144mb.html)
 [![Language](https://img.shields.io/badge/C-00599C?style=for-the-badge&logo=c&logoColor=white)](https://en.wikipedia.org/wiki/C_(programming_language))
 [![Engine](https://img.shields.io/badge/raylib-000000?style=for-the-badge&logo=raylib&logoColor=white)](https://www.raylib.com/)
 [![License](https://img.shields.io/badge/License-zlib%2Flibpng-green?style=for-the-badge)](raylib/LICENSE)
+
+---
+
+## 📄 Table of Contents / Sumário
+
+- [English](#-english)
+  - [About the Project](#-about-the-project)
+  - [Controls](#-controls)
+  - [Systems & Gameplay Definitions](#️-systems--gameplay-definitions)
+  - [Enemies & Hazards](#-enemies--hazards)
+  - [Size Budget](#-size-budget)
+  - [Build & Run](#️-build--run)
+  - [Repository Structure](#-repository-structure)
+  - [Developer & Credits](#-developer--credits)
+- [Português (Brasil)](#-português-brasil)
+  - [Sobre o Projeto](#-sobre-o-projeto)
+  - [Controles](#-controles)
+  - [Sistemas & Definições de Gameplay](#️-sistemas--definições-de-gameplay)
+  - [Inimigos & Perigos](#-inimigos--perigos)
+  - [Orçamento de Tamanho](#-orçamento-de-tamanho)
+  - [Compilação & Execução](#️-compilação--execução)
+  - [Estrutura do Repositório](#-estrutura-do-repositório)
+  - [Desenvolvedora & Créditos](#-desenvolvedora--créditos)
 
 ---
 
@@ -151,7 +176,7 @@ ByteMaze/
 
 ---
 
-# 🌀 ByteMaze
+## 🇧🇷 Português (Brasil)
 
 **Um jogo de ação e sobrevivência em labirintos procedurais com foco em precisão, estratégia e otimização extrema.**
 

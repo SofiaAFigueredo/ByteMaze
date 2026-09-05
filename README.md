@@ -11,6 +11,29 @@
 
 ---
 
+## 📄 Table of Contents / Sumário
+
+- [English](#-english)
+  - [About the Project](#-about-the-project)
+  - [Controls](#-controls)
+  - [Systems & Gameplay Definitions](#️-systems--gameplay-definitions)
+  - [Enemies & Hazards](#-enemies--hazards)
+  - [Size Budget](#-size-budget)
+  - [Build & Run](#️-build--run)
+  - [Repository Structure](#-repository-structure)
+  - [Developer & Credits](#-developer--credits)
+- [Português (Brasil)](#-português-brasil)
+  - [Sobre o Projeto](#-sobre-o-projeto)
+  - [Controles](#-controles)
+  - [Sistemas & Definições de Gameplay](#️-sistemas--definições-de-gameplay)
+  - [Inimigos & Perigos](#-inimigos--perigos)
+  - [Orçamento de Tamanho](#-orçamento-de-tamanho)
+  - [Compilação & Execução](#️-compilação--execução)
+  - [Estrutura do Repositório](#-estrutura-do-repositório)
+  - [Desenvolvedora & Créditos](#-desenvolvedora--créditos)
+
+---
+
 ## 💡 About the Project
 
 **ByteMaze** combines fast survival action with tactical exploration in procedurally generated mazes. Built from scratch in **C** using **raylib**, the game was designed to deliver a modern experience while keeping the final size extremely small.
