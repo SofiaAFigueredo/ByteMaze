@@ -1,118 +1,150 @@
-# ByteMaze
+# 🌀 ByteMaze
 
-[![1.44MB Game Dev Contest](https://img.shields.io/badge/Contest-1.44MB%20Game%20Dev-blueviolet)](https://2pgarcade.com/contest-144mb.html)
-[![Language](https://img.shields.io/badge/Language-C-blue)](https://en.wikipedia.org/wiki/C_(programming_language))
-[![Engine](https://img.shields.io/badge/Engine-raylib-blue)](https://www.raylib.com/)
-[![License](https://img.shields.io/badge/License-zlib%2Flibpng-green)](raylib/LICENSE)
+**Um jogo de ação e sobrevivência em labirintos procedurais com foco em precisão, estratégia e otimização extrema.**
 
-**ByteMaze** e um jogo de acao e sobrevivencia em labirintos procedurais. O projeto foi feito em **C** com **raylib**, com foco em executavel independente e pacote final abaixo de 1.44 MB.
+[![1.44MB Game Dev Contest](https://img.shields.io/badge/Contest-1.44MB%20Game%20Dev-8A2BE2?style=for-the-badge&logo=itchio&logoColor=white)](https://2pgarcade.com/contest-144mb.html)
+[![Language](https://img.shields.io/badge/C-00599C?style=for-the-badge&logo=c&logoColor=white)](https://en.wikipedia.org/wiki/C_(programming_language))
+[![Engine](https://img.shields.io/badge/raylib-000000?style=for-the-badge&logo=raylib&logoColor=white)](https://www.raylib.com/)
+[![License](https://img.shields.io/badge/License-zlib%2Flibpng-green?style=for-the-badge)](raylib/LICENSE)
 
-## Competicao
+---
 
-O jogo foi preparado para o **[1.44MB Game Dev Contest](https://2pgarcade.com/contest-144mb.html)**, da **2P Game Arcade**.
+## 💡 Sobre o Projeto
 
-Regras relevantes verificadas na pagina oficial:
+**ByteMaze** combina ação frenética de sobrevivência com exploração tática de labirintos gerados proceduralmente. Desenvolvido do zero na linguagem **C** utilizando a biblioteca **raylib**, o jogo foi concebido para entregar uma experiência moderna mantendo um consumo de espaço ultra-eficiente.
 
-- Limite descompactado: **1,474,560 bytes**.
-- Engine livre, desde que executavel, runtime e assets caibam no limite.
-- O jogo deve rodar como executavel independente; jogos de navegador nao sao aceitos.
-- Criterios: jogo completo, dentro do tamanho e divertido.
+> 🏆 **1.44MB Game Dev Contest (2P Game Arcade)**\
+> Desenvolvido especialmente para o desafio de criar um jogo completo, offline e divertido que caiba no espaço histórico de um disquete de 3.5" (**1.474.560 bytes**).
 
-## Como Jogar
+---
 
-| Tecla | Acao |
-| :--- | :--- |
-| `W` `A` `S` `D` ou `Setas` | Mover |
-| `SHIFT` | Dash com cargas limitadas por round |
-| `ESPACO` | Atirar na direcao do triangulo |
-| `R` | Recarregar o pente |
-| `TAB` | Abrir/fechar mapa tatico |
-| `C` | Ligar/desligar lanterna |
-| `F` | Usar uma carga manual de raio |
+## 🎮 Controles
 
-## Definicoes de Gameplay
+| Tecla | Ação |
+| :---: | :--- |
+| `W` `A` `S` `D` / `Setas` | Movimentação do personagem |
+| `SHIFT` | **Dash**: Impulso rápido (cargas limitadas por round) |
+| `ESPAÇO` | **Atirar**: Dispara na direção da mira |
+| `R` | **Recarregar**: Carrega o pente de munição |
+| `TAB` | **Mapa Tático**: Abre/fecha a visualização da área |
+| `C` | **Lanterna**: Alterna a iluminação da visão |
+| `F` | **Raio**: Revela o labirinto inteiro por alguns segundos |
 
-| Sistema | Valor |
-| :--- | :--- |
-| Vida inicial | `50` |
-| Vida maxima | `100` |
-| Loja de vida | `+5` de vida maxima por `100` moedas |
-| Cura no chao | Restaura `15` de vida |
-| Pente da arma | Maximo de `15` balas carregadas |
-| Municao inicial | `30` municoes totais apenas no inicio da corrida |
-| Municao maxima | `100` municoes totais |
-| Loja de municao | `+30` municoes por `100` moedas, respeitando o limite de `100` |
-| Municao no chao | `+10` municoes |
-| Bateria da lanterna | Drena `1%` por segundo ligada; ligar custa `1%` |
-| Loja da lanterna | Compra soma `+50%` de bateria por `100` moedas, ate `100%` |
-| Bateria do mapa | Drena `1%` por segundo aberto; abrir custa `1%` |
-| Loja do mapa | Compra soma `+50%` de bateria por `100` moedas, ate `100%` |
-| Bateria no chao | Recarrega `+15%` na lanterna e no mapa |
-| Moedas no chao | `+25` moedas |
-| Recompensa por round | `+50` moedas |
+---
 
-## Inimigos e Progressao
+## ⚙️ Sistemas & Definições de Gameplay
 
-- Inimigos vermelhos patrulham e perseguem quando o jogador esta perto.
-- Inimigos rosas atiram quando ficam alinhados com o jogador em linha ou coluna sem parede.
-- O chefao roxo persegue, atira quando alinhado e acelera quando esta longe.
-- Todos os inimigos ficam nocauteados por `5` segundos apos `5` acertos.
-- Rounds avancados adicionam chave/saida trancada, armadilhas, baixa visibilidade, mapa bloqueado, menos dash e maior pressao do chefao.
-- Recursos coletados durante um round so ficam salvos se o round for vencido.
-- A municao total e carregada entre rounds: o que sobra continua, e compras ou caixas no chao somam em cima desse saldo ate o limite de `100`.
+### 🔴 Vida & Sobrevivência
+- **Vida Inicial:** `50 HP` (máximo: `100 HP`)
+- **Cura no Chão:** Restaura `+15 HP` instantaneamente.
+- **Loja de Vida:** Aumenta o limite máximo em `+5 HP` por `100` moedas.
 
-## Tamanho
+### 🔫 Munição & Combate
+- **Pente da Arma:** Capacidade de `15` balas engatilhadas.
+- **Munição Inicial:** `30` munições totais apenas no início da corrida.
+- **Limite Máximo:** `100` munições totais.
+- **Munição no Chão:** Adiciona `+10` projéteis.
+- **Loja de Munição:** Adiciona `+30` projéteis por `100` moedas.
+- **Persistência:** O que sobra continua entre rounds; compras e coletas somam em cima do saldo atual até o limite de `100`.
 
-A regra da competicao considera o conteudo final descompactado. A medicao local soma o executavel e `src/assets`.
+### ⚡ Baterias (Lanterna & Mapa)
+- **Consumo Ativo:** Drena `1%` por segundo de uso + custo de `1%` ao ativar.
+- **Carga no Chão:** Recarrega `+15%` em ambos os dispositivos.
+- **Loja de Bateria:** Recarrega `+50%` na lanterna e no mapa por `100` moedas, respeitando o limite de `100%`.
 
-| Componente | Tamanho atual |
-| :--- | ---: |
-| `bytemaze` gerado por `make release` no Linux | `577,528` bytes |
-| `src/assets` | `48,404` bytes |
-| Total medido por `make size` | `625,932` bytes |
-| Limite | `1,474,560` bytes |
-| Uso | `42.45%` |
-| Folga | `848,628` bytes |
+### 🪙 Economia & Recompensas
+- **Moedas no Chão:** `+25` moedas ao coletar.
+- **Bônus de Round:** `+50` moedas por vitória.
+- ⚠️ *Atenção: Os recursos coletados no round só são salvos se você vencer a etapa!*
 
-O arquivo `bytemaze.exe` presente no diretorio tem `772,608` bytes. Somado aos assets atuais, fica em `821,012` bytes (`55.68%` do limite), ainda abaixo da regra de `1,474,560` bytes.
+---
 
-Use `make size` antes de enviar o pacote final.
+## 👾 Inimigos & Perigos
 
-## Compilar e Executar
+* **🔴 Inimigos Vermelhos:** Realizam patrulhas e perseguem o jogador quando detectado.
+* **🩷 Inimigos Rosas:** Atacam à distância assim que alinham visão direta no eixo horizontal ou vertical.
+* **🟣 O Chefão (Boss):** Persegue implacavelmente, dispara quando alinhado e ganha aceleração ao se distanciar.
+* **💫 Nocaute:** Acerte qualquer inimigo **5 vezes** para desativá-lo temporariamente por **5 segundos**.
+* **⚡ Níveis Avançados:** Exigem encontrar a chave dourada para desbloquear a saída, além de introduzir armadilhas, baixa visibilidade e bloqueio de radar.
 
-Pre-requisitos:
+---
 
-- `gcc` ou `clang`
+## 📊 Orçamento de Tamanho
+
+O limite rigoroso da competição exige que o executável e todos os assets caibam no envelope de 1.44 MB descompactado.
+
+```text
+📊 Relatório de Ocupação do Projeto:
+
+┌────────────────────────┬─────────────────┬──────────┐
+│ Componente             │ Tamanho (Bytes) │ % do Max │
+├────────────────────────┼─────────────────┼──────────┤
+│ Binário Linux          │ ~577,528 B      │   39.16% │
+│ Assets (Fontes)        │  ~48,404 B      │    3.28% │
+├────────────────────────┼─────────────────┼──────────┤
+│ TOTAL MEDIDO           │  625,932 B      │   42.45% │
+└────────────────────────┴─────────────────┴──────────┘
+
+💾 Limite Máximo: 1,474,560 bytes
+🟢 Margem Livre:   848,628 bytes (57.55%)
+```
+
+> ℹ️ O pacote `ByteMaze-1.44MB-linux.zip` contém o binário Linux, os assets necessários e este README. Descompactado, fica com aproximadamente `630,264 bytes`, ainda abaixo do limite da competição.
+
+---
+
+## 🛠️ Compilação & Execução
+
+### Pré-requisitos
+Certifique-se de ter os seguintes utilitários instalados:
+- Compilador C (`gcc` ou `clang`)
 - `cmake`
 - `make`
-- raylib presente no diretorio `raylib/`
+- Submódulo da biblioteca **raylib** atualizado
 
-Comandos:
+### Passos para Compilar
 
+1. Clone o repositório com as dependências:
+```sh
+git clone --recursive https://github.com/SofiaAFigueredo/ByteMaze.git
+cd ByteMaze
+```
+
+2. Compile a versão otimizada de lançamento:
 ```sh
 make release
+```
+
+3. Execute o jogo:
+```sh
 make run
+```
+
+4. Verifique a conformidade de tamanho para a submissão:
+```sh
 make size
 ```
 
-No Linux o alvo gera `bytemaze`; no Windows o alvo gera `bytemaze.exe`.
+---
 
-## Arquivos Principais
+## 📂 Estrutura do Repositório
 
 ```text
-.
-├── Makefile
-├── README.md
-├── bytemaze.exe
-├── src/
-│   ├── main.c
-│   └── assets/
-│       └── fonts/
-└── raylib/
+ByteMaze/
+├── 📄 Makefile            # Script de automação e checagem de bytes
+├── 📄 README.md           # Documentação do projeto
+├── 📁 src/
+│   ├── 📄 main.c          # Lógica completa do jogo
+│   └── 📁 assets/         # Recursos essenciais
+└── 📁 raylib/             # Código-fonte da biblioteca gráfica
 ```
 
-`bytemaze_save.dat` e criado apenas para progresso local do jogador e nao deve entrar na submissao oficial.
+> 📌 *Nota: O arquivo de save gerado localmente (`bytemaze_save.dat`) é ignorado e não faz parte do pacote de submissão.*
 
-## Licenca
+---
 
-Este projeto usa raylib. Consulte [`raylib/LICENSE`](raylib/LICENSE).
+## 👤 Desenvolvedora & Créditos
+
+- **Desenvolvimento:** Sofia A. Figueredo ([@SofiaAFigueredo](https://github.com/SofiaAFigueredo))
+- **Assistência técnica:** OpenAI Codex, usado como apoio em revisão de código, balanceamento, correções de build e documentação.
+- **Engine Gráfica:** Este projeto utiliza a biblioteca [raylib](https://www.raylib.com/), distribuída sob a licença zlib/libpng. Consulte o arquivo [`raylib/LICENSE`](raylib/LICENSE) para mais detalhes.
