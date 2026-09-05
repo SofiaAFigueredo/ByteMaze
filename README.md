@@ -1,4 +1,4 @@
-# 🌀 ByteMaze
+# ByteMaze
 
 
 **An action-survival game set in procedural mazes, focused on precision, strategy, and extreme size optimization.**
