@@ -29,26 +29,30 @@
 #define CELL_BATTERY_PICKUP 5
 #define CELL_KEY 6
 #define CELL_LOCKED_EXIT 7
-#define CELL_RELIC 8
 #define CELL_HEALTH_PICKUP 9
+#define CELL_TRAP 10
 #define RED_ENEMY_COUNT 3
 #define BLUE_ENEMY_COUNT 2
 #define MAX_BULLETS 48
-#define FLASHLIGHT_MAX_BATTERY 50.0f
+#define FLASHLIGHT_MAX_BATTERY 100.0f
 #define FLASHLIGHT_DRAIN_INTERVAL 1.0f
-#define FLASHLIGHT_DRAIN_AMOUNT 5.0f
+#define FLASHLIGHT_DRAIN_AMOUNT 1.8f
+#define FLASHLIGHT_TOGGLE_COST 1.0f
+#define MAP_MAX_BATTERY 100.0f
+#define MAP_DRAIN_AMOUNT 2.5f
 #define PLAYER_BULLET_SPEED 220.0f
 #define BLUE_BULLET_SPEED 140.0f
-#define BOSS_BULLET_SPEED 150.0f
+#define BOSS_BULLET_SPEED 118.0f
 #define BULLET_RADIUS 4.0f
 #define RED_HIT_LIMIT 5
 #define BLUE_HIT_LIMIT 5
 #define ENEMY_KNOCKOUT_TIME 5.0f
 #define BOSS_HIT_LIMIT 5
 #define PLAYER_MAX_HEALTH 100
-#define PLAYER_MAGAZINE_SIZE 15
-#define PLAYER_MAX_AMMO 100
-#define SHOP_AMMO_GAIN 50
+#define PLAYER_MAGAZINE_SIZE 30
+#define PLAYER_MAX_AMMO 30
+#define PLAYER_AMMO_CAP 100
+#define SHOP_AMMO_GAIN 30
 #define PLAYER_RELOAD_TIME 1.5f
 #define BLUE_BULLET_DAMAGE 15
 #define ENEMY_TOUCH_DAMAGE 25
@@ -62,27 +66,34 @@
 #define EVOLUTION_ROUND_XP 60
 #define EVOLUTION_PICKUP_XP 5
 #define EVOLUTION_HEALTH_GAIN 5
-#define EVOLUTION_AMMO_GAIN 25
+#define EVOLUTION_AMMO_GAIN 10
 #define SHOP_STANDARD_PRICE 100
 #define SHOP_LIGHTNING_PRICE 400
 #define SHOP_HEALTH_GAIN 5
 #define PICKUP_COIN_VALUE 25
-#define PICKUP_AMMO_VALUE 15
+#define PICKUP_AMMO_VALUE 10
 #define PICKUP_BATTERY_VALUE 15.0f
-#define PICKUP_RELIC_COINS 75
 #define PICKUP_HEALTH_VALUE 15
 #define LIGHTNING_REVEAL_INTERVAL 15.0f
 #define LIGHTNING_REVEAL_TIME 3.0f
+#define TRAP_ACTIVE_TIME 3.0f
+#define TRAP_INACTIVE_TIME 3.0f
 #define MAX_FLOATING_NOTICES 12
 #define FLOATING_NOTICE_TIME 1.25f
+#define MAX_PARTICLES 160
+#define PARTICLE_TIME 0.62f
+#define PLAYER_DASH_SPEED_MULTIPLIER 3.15f
+#define PLAYER_DASH_TIME 0.16f
+#define PLAYER_DASH_COOLDOWN 2.35f
+#define PLAYER_DASH_DAMAGE_GRACE 0.22f
+#define PLAYER_DASH_MAX_CHARGES 3
+#define TRAP_DAMAGE 18
+#define MODIFIER_START_ROUND 8
 #define PLAYER_CROWD_RADIUS (TILE_SIZE * 2.75f)
 #define PLAYER_MAX_NEAR_ENEMIES 2
 #define PLAYER_COLLISION_STEP 2.0f
 #define PLAYER_COLLISION_SKIN 1.0f
 #define PLAYER_WALL_RADIUS_SCALE 0.72f
-#define MUSIC_BASE_VOLUME 0.35f
-#define MUSIC_NEAR_ENEMY_VOLUME 0.78f
-#define MUSIC_NEAR_ENEMY_DISTANCE (TILE_SIZE * 8.0f)
 #define PLAYER_SHOT_VOLUME 0.95f
 #define ENEMY_SHOT_VOLUME 0.9f
 #define PLAYER_RELOAD_VOLUME 0.9f
@@ -93,7 +104,7 @@
 #define UI_FONT_BAKE_SIZE 48
 #define UI_MAX_CODEPOINTS 512
 #define BOSS_FAR_DISTANCE_THRESHOLD (TILE_SIZE * 10.0f)
-#define BOSS_FAR_SPEED_MULTIPLIER 1.8f
+#define BOSS_FAR_SPEED_MULTIPLIER 1.45f
 #define MAX_SIMULATION_FRAME_TIME (1.0f / 45.0f)
 
 typedef struct FloatingNotice
@@ -104,12 +115,32 @@ typedef struct FloatingNotice
     float timer;
 } FloatingNotice;
 
+typedef struct Particle
+{
+    Vector2 position;
+    Vector2 velocity;
+    Color color;
+    float radius;
+    float timer;
+    float maxTimer;
+} Particle;
+
+typedef struct RoundModifiers
+{
+    bool lowVisibility;
+    bool mapJammed;
+    bool trapSurge;
+    bool lowDash;
+    bool bossPressure;
+} RoundModifiers;
+
 int grid[GRID_HEIGTH][GRID_WIDTH];
 long long executableSizeBytes = -1;
 float executableUsagePercent = 0.0f;
 bool flashlightOn = false;
 float flashlightBattery = FLASHLIGHT_MAX_BATTERY;
 float flashlightDrainTimer = 0.0f;
+float mapBattery = MAP_MAX_BATTERY;
 int playerMaxHealth = PLAYER_START_HEALTH;
 int playerHealth = PLAYER_START_HEALTH;
 int playerMaxAmmo = PLAYER_MAX_AMMO;
@@ -127,11 +158,28 @@ bool hasExitKey = false;
 int lockedExitCellX = -1;
 int lockedExitCellY = -1;
 FloatingNotice floatingNotices[MAX_FLOATING_NOTICES] = { 0 };
+Particle particles[MAX_PARTICLES] = { 0 };
 int roundPickupsCollected = 0;
 int roundShotsFired = 0;
 bool roundTookDamage = false;
 int pendingRoundBonus = 0;
 int pendingEvolutionXp = 0;
+bool victoryRoundsOpen = false;
+int roundStartCoins = SHOP_START_COINS;
+int roundStartLevel = 1;
+int roundStartXp = 0;
+int roundStartMaxAmmo = PLAYER_MAX_AMMO;
+int roundStartTotalAmmo = PLAYER_MAX_AMMO;
+int roundStartAmmo = PLAYER_MAGAZINE_SIZE;
+float roundStartBattery = FLASHLIGHT_MAX_BATTERY;
+float roundStartMapBattery = MAP_MAX_BATTERY;
+int roundStartLightning = 0;
+bool roundStartSnapshotActive = false;
+float playerDashTimer = 0.0f;
+float playerDashCooldown = 0.0f;
+int playerDashCharges = PLAYER_DASH_MAX_CHARGES;
+bool tacticalMapOpen = false;
+RoundModifiers currentModifiers = { 0 };
 
 extern bool inTutorialSequence;
 extern int officialRound;
@@ -141,6 +189,61 @@ Vector2 GetCellCenter(int cellX, int cellY);
 bool IsLockedExitRound(void)
 {
     return !inTutorialSequence && officialRound >= 4;
+}
+
+RoundModifiers GetRoundModifiers(int round)
+{
+    RoundModifiers mods = { 0 };
+
+    if (round < MODIFIER_START_ROUND)
+    {
+        return mods;
+    }
+
+    mods.lowVisibility = (round % 3) == 1;
+    mods.mapJammed = (round % 4) == 0;
+    mods.trapSurge = (round % 5) == 0;
+    mods.lowDash = (round % 6) == 0;
+    mods.bossPressure = (round % 7) == 0;
+    return mods;
+}
+
+const char *FormatModifierSummary(RoundModifiers mods)
+{
+    static char summary[80];
+    summary[0] = '\0';
+
+    if (mods.lowVisibility) strncat(summary, " VISAO", sizeof(summary) - strlen(summary) - 1);
+    if (mods.mapJammed) strncat(summary, " MAPA-", sizeof(summary) - strlen(summary) - 1);
+    if (mods.trapSurge) strncat(summary, " TRAPS+", sizeof(summary) - strlen(summary) - 1);
+    if (mods.lowDash) strncat(summary, " DASH-", sizeof(summary) - strlen(summary) - 1);
+    if (mods.bossPressure) strncat(summary, " BOSS+", sizeof(summary) - strlen(summary) - 1);
+    return (summary[0] == '\0') ? "PADRAO+" : summary;
+}
+
+const char *GetModifierSummary(void)
+{
+    if (inTutorialSequence || officialRound < MODIFIER_START_ROUND)
+    {
+        return "PADRAO";
+    }
+
+    return FormatModifierSummary(currentModifiers);
+}
+
+int GetRoundDashMaxCharges(void)
+{
+    return currentModifiers.lowDash ? 2 : PLAYER_DASH_MAX_CHARGES;
+}
+
+bool IsTacticalMapAvailable(void)
+{
+    return !currentModifiers.mapJammed;
+}
+
+float GetDarknessVisionScale(void)
+{
+    return currentModifiers.lowVisibility ? 0.72f : 1.0f;
 }
 
 Color HUD_PANEL_COLOR = { 5, 10, 32, 232 };
@@ -396,6 +499,27 @@ void ShuffleDirections(int directions[4])
     }
 }
 
+void CarveExitBypass(int exitX, int exitY)
+{
+    for (int y = exitY - 1; y <= exitY + 1; y++)
+    {
+        for (int x = exitX - 1; x <= exitX + 1; x++)
+        {
+            if (x <= 0 || x >= GRID_WIDTH - 1 || y <= 0 || y >= GRID_HEIGTH - 1)
+            {
+                continue;
+            }
+
+            if (x == exitX && y == exitY)
+            {
+                continue;
+            }
+
+            grid[y][x] = CELL_PATH;
+        }
+    }
+}
+
 void GenerateMaze(void)
 {
     bool lockedExitRound = IsLockedExitRound();
@@ -474,7 +598,7 @@ void GenerateMaze(void)
         }
     }
 
-    if (!inTutorialSequence && officialRound >= 15)
+    if (!inTutorialSequence && officialRound >= MODIFIER_START_ROUND)
     {
         int exitX = GRID_WIDTH - 2;
         int exitY = 1;
@@ -499,32 +623,126 @@ void GenerateMaze(void)
             }
         }
 
+        CarveExitBypass(exitX, exitY);
         grid[exitY][exitX] = lockedExitRound ? CELL_LOCKED_EXIT : CELL_EXIT;
         lockedExitCellX = exitX;
         lockedExitCellY = exitY;
     }
     else
     {
-        grid[1][GRID_WIDTH - 2] = lockedExitRound ? CELL_LOCKED_EXIT : CELL_EXIT;
-        lockedExitCellX = GRID_WIDTH - 2;
-        lockedExitCellY = 1;
+        int exitX = GRID_WIDTH - 3;
+        int exitY = 1;
+
+        CarveExitBypass(exitX, exitY);
+        grid[exitY][exitX] = lockedExitRound ? CELL_LOCKED_EXIT : CELL_EXIT;
+        lockedExitCellX = exitX;
+        lockedExitCellY = exitY;
     }
+}
+
+bool IsGridCellWalkableForPickup(int x, int y)
+{
+    if (x < 0 || x >= GRID_WIDTH || y < 0 || y >= GRID_HEIGTH)
+    {
+        return false;
+    }
+
+    return grid[y][x] != CELL_WALL && grid[y][x] != CELL_LOCKED_EXIT;
+}
+
+int CountWalkablePickupNeighbors(int x, int y)
+{
+    const int neighborOffsets[4][2] = {
+        { 1, 0 },
+        { -1, 0 },
+        { 0, 1 },
+        { 0, -1 }
+    };
+    int neighbors = 0;
+
+    for (int i = 0; i < 4; i++)
+    {
+        if (IsGridCellWalkableForPickup(x + neighborOffsets[i][0], y + neighborOffsets[i][1]))
+        {
+            neighbors++;
+        }
+    }
+
+    return neighbors;
+}
+
+bool IsPickupNextToLockedExit(int x, int y)
+{
+    if (lockedExitCellX < 0 || lockedExitCellY < 0)
+    {
+        return false;
+    }
+
+    return abs(x - lockedExitCellX) + abs(y - lockedExitCellY) <= 1;
+}
+
+bool IsValidPickupCell(int x, int y, int cellType, bool relaxedKeyRules)
+{
+    if (grid[y][x] != CELL_PATH || IsCellOccupiedByEnemy(x, y) || (abs(x - 1) + abs(y - 1)) <= 8)
+    {
+        return false;
+    }
+
+    if (cellType == CELL_KEY)
+    {
+        int exitDistance = (lockedExitCellX >= 0 && lockedExitCellY >= 0) ? abs(x - lockedExitCellX) + abs(y - lockedExitCellY) : 99;
+        int requiredNeighbors = relaxedKeyRules ? 1 : 2;
+
+        if (IsPickupNextToLockedExit(x, y) || exitDistance <= 3)
+        {
+            return false;
+        }
+
+        if (CountWalkablePickupNeighbors(x, y) < requiredNeighbors)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool TryPlacePickupCell(int cellType, bool relaxedKeyRules)
+{
+    for (int attempt = 0; attempt < 90; attempt++)
+    {
+        int x = GetRandomValue(1, GRID_WIDTH - 2);
+        int y = GetRandomValue(1, GRID_HEIGTH - 2);
+
+        if (IsValidPickupCell(x, y, cellType, relaxedKeyRules))
+        {
+            grid[y][x] = cellType;
+            return true;
+        }
+    }
+
+    for (int y = 1; y < GRID_HEIGTH - 1; y++)
+    {
+        for (int x = 1; x < GRID_WIDTH - 1; x++)
+        {
+            if (IsValidPickupCell(x, y, cellType, relaxedKeyRules))
+            {
+                grid[y][x] = cellType;
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 void PlacePickupCell(int cellType, int amount)
 {
     for (int placed = 0; placed < amount; placed++)
     {
-        for (int attempt = 0; attempt < 90; attempt++)
+        if (!TryPlacePickupCell(cellType, false) && cellType == CELL_KEY)
         {
-            int x = GetRandomValue(1, GRID_WIDTH - 2);
-            int y = GetRandomValue(1, GRID_HEIGTH - 2);
-
-            if (grid[y][x] == CELL_PATH && !IsCellOccupiedByEnemy(x, y) && (abs(x - 1) + abs(y - 1)) > 8)
-            {
-                grid[y][x] = cellType;
-                break;
-            }
+            TryPlacePickupCell(cellType, true);
         }
     }
 }
@@ -545,9 +763,9 @@ void PlaceRoundPickups(bool flashlightEnabled)
         PlacePickupCell(CELL_KEY, 1);
     }
 
-    if (officialRound >= 7)
+    if (officialRound >= 9)
     {
-        PlacePickupCell(CELL_RELIC, 1);
+        PlacePickupCell(CELL_TRAP, 2 + (officialRound >= 14 ? 1 : 0) + (currentModifiers.trapSurge ? 3 : 0));
     }
 
     if (flashlightEnabled)
@@ -608,6 +826,9 @@ Sound flashlightToggleSound;
 Sound lightningSound;
 Sound victorySound;
 Sound gameOverSound;
+Sound dashSound;
+Sound trapSound;
+Sound bossAlertSound;
 bool gameAudioLoaded = false;
 Font uiFont;
 bool uiFontLoaded = false;
@@ -728,6 +949,17 @@ void UpdateGameAudio(void);
 void ShutdownGameAudio(void);
 void InitUIFont(void);
 void ShutdownUIFont(void);
+void DrawTacticalMapOverlay(void);
+void SpawnFloatingNotice(Vector2 position, const char *text, Color color);
+bool DamagePlayer(int damage);
+RoundModifiers GetRoundModifiers(int round);
+const char *GetModifierSummary(void);
+int GetRoundDashMaxCharges(void);
+bool IsTacticalMapAvailable(void);
+float GetDarknessVisionScale(void);
+void SpawnParticleBurst(Vector2 position, Color color, int count, float speed, float radius);
+void UpdateParticles(void);
+void DrawParticles(void);
 void DrawButtonArrow(Rectangle button, Color color);
 Vector2 MeasureTextStrongSpaced(const char *text, int fontSize, float spacing);
 void SaveProgress(void);
@@ -773,12 +1005,17 @@ void ClampProgressState(void)
     if (playerHealth < 1) playerHealth = playerMaxHealth;
     if (playerHealth > playerMaxHealth) playerHealth = playerMaxHealth;
     if (playerMaxAmmo < PLAYER_MAX_AMMO) playerMaxAmmo = PLAYER_MAX_AMMO;
+    if (playerMaxAmmo > PLAYER_AMMO_CAP) playerMaxAmmo = PLAYER_AMMO_CAP;
     if (playerTotalAmmo < 0) playerTotalAmmo = 0;
+    if (playerTotalAmmo > PLAYER_AMMO_CAP) playerTotalAmmo = PLAYER_AMMO_CAP;
+    if (playerTotalAmmo > playerMaxAmmo) playerTotalAmmo = playerMaxAmmo;
     if (playerAmmo < 0) playerAmmo = 0;
     if (playerAmmo > PLAYER_MAGAZINE_SIZE) playerAmmo = PLAYER_MAGAZINE_SIZE;
     if (playerAmmo > playerTotalAmmo) playerAmmo = playerTotalAmmo;
     if (flashlightBattery < 0.0f) flashlightBattery = 0.0f;
     if (flashlightBattery > FLASHLIGHT_MAX_BATTERY) flashlightBattery = FLASHLIGHT_MAX_BATTERY;
+    if (mapBattery < 0.0f) mapBattery = 0.0f;
+    if (mapBattery > MAP_MAX_BATTERY) mapBattery = MAP_MAX_BATTERY;
     if (lightningCharges < 0) lightningCharges = 0;
 }
 
@@ -796,7 +1033,7 @@ void AddEvolutionXp(int amount)
         playerXp -= GetEvolutionXpToNextLevel();
         playerLevel++;
 
-        if (playerMaxHealth < PLAYER_MAX_HEALTH)
+        if (playerMaxHealth < PLAYER_MAX_HEALTH && (playerLevel % 2) == 0)
         {
             playerMaxHealth += EVOLUTION_HEALTH_GAIN;
             if (playerMaxHealth > PLAYER_MAX_HEALTH)
@@ -808,6 +1045,9 @@ void AddEvolutionXp(int amount)
 
         playerMaxAmmo += EVOLUTION_AMMO_GAIN;
         playerTotalAmmo += EVOLUTION_AMMO_GAIN;
+        ClampProgressState();
+        SpawnFloatingNotice(player.position, TextFormat("NIVEL %d", playerLevel), GOLD);
+        SpawnParticleBurst(player.position, GOLD, 28, 130.0f, 3.0f);
     }
 }
 
@@ -837,6 +1077,49 @@ void SaveProgressForRound(int savedRound, int savedBestRound)
 void SaveProgress(void)
 {
     SaveProgressForRound(officialRound, bestOfficialRound);
+}
+
+void CaptureRoundStartSnapshot(void)
+{
+    if (inTutorialSequence)
+    {
+        roundStartSnapshotActive = false;
+        return;
+    }
+
+    roundStartCoins = playerCoins;
+    roundStartLevel = playerLevel;
+    roundStartXp = playerXp;
+    roundStartMaxAmmo = playerMaxAmmo;
+    roundStartTotalAmmo = playerTotalAmmo;
+    roundStartAmmo = playerAmmo;
+    roundStartBattery = flashlightBattery;
+    roundStartMapBattery = mapBattery;
+    roundStartLightning = lightningCharges;
+    roundStartSnapshotActive = true;
+}
+
+void RestoreRoundStartSnapshot(void)
+{
+    if (!roundStartSnapshotActive)
+    {
+        return;
+    }
+
+    playerCoins = roundStartCoins;
+    playerLevel = roundStartLevel;
+    playerXp = roundStartXp;
+    playerMaxAmmo = roundStartMaxAmmo;
+    playerTotalAmmo = roundStartTotalAmmo;
+    playerAmmo = roundStartAmmo;
+    flashlightBattery = roundStartBattery;
+    mapBattery = roundStartMapBattery;
+    lightningCharges = roundStartLightning;
+    pendingRoundBonus = 0;
+    pendingEvolutionXp = 0;
+    roundPickupsCollected = 0;
+    ClampProgressState();
+    roundStartSnapshotActive = false;
 }
 
 void LoadProgress(void)
@@ -947,7 +1230,7 @@ const char *uiText[LANGUAGE_COUNT][TEXT_COUNT] = {
         [TEXT_SHOP_BUY_LIGHTNING] = "RAIO",
         [TEXT_SHOP_START] = "VOLTAR AO JOGO",
         [TEXT_SHOP_MAX] = "MAX",
-        [TEXT_SHOP_LOCKED] = "Round 11",
+        [TEXT_SHOP_LOCKED] = "Round 10",
         [TEXT_HUD_LIGHTNING] = "RAIO"
     },
     [LANGUAGE_ES] = {
@@ -999,7 +1282,7 @@ const char *uiText[LANGUAGE_COUNT][TEXT_COUNT] = {
         [TEXT_SHOP_BUY_LIGHTNING] = "RAYO",
         [TEXT_SHOP_START] = "VOLVER AL JUEGO",
         [TEXT_SHOP_MAX] = "MAX",
-        [TEXT_SHOP_LOCKED] = "Ronda 11",
+        [TEXT_SHOP_LOCKED] = "Ronda 10",
         [TEXT_HUD_LIGHTNING] = "RAYO"
     },
     [LANGUAGE_EN] = {
@@ -1051,7 +1334,7 @@ const char *uiText[LANGUAGE_COUNT][TEXT_COUNT] = {
         [TEXT_SHOP_BUY_LIGHTNING] = "LIGHTNING",
         [TEXT_SHOP_START] = "BACK TO GAME",
         [TEXT_SHOP_MAX] = "MAX",
-        [TEXT_SHOP_LOCKED] = "Round 11",
+        [TEXT_SHOP_LOCKED] = "Round 10",
         [TEXT_HUD_LIGHTNING] = "LIGHTNING"
     },
     [LANGUAGE_KO] = {
@@ -1093,18 +1376,18 @@ const char *uiText[LANGUAGE_COUNT][TEXT_COUNT] = {
         [TEXT_HUD_FILL_AMMO] = "탄약 채우기",
         [TEXT_HUD_LANTERNA] = "손전등",
         [TEXT_RELOAD_IN_PROGRESS] = "재장전 중",
-        [TEXT_STAGE_COMPLETE] = "%s %d 완료!",
+        [TEXT_STAGE_COMPLETE] = "%s %d 성공!",
         [TEXT_NEXT_ROUND] = "다음 라운드",
-        [TEXT_SHOP_TITLE] = "상점",
+        [TEXT_SHOP_TITLE] = "SHOP",
         [TEXT_SHOP_COINS] = "코인: %d",
         [TEXT_SHOP_BUY_AMMO] = "탄약",
         [TEXT_SHOP_BUY_BATTERY] = "배터리 100%",
         [TEXT_SHOP_BUY_HEALTH] = "최대 체력 +5",
-        [TEXT_SHOP_BUY_LIGHTNING] = "번개 +1",
+        [TEXT_SHOP_BUY_LIGHTNING] = "LIGHTNING +1",
         [TEXT_SHOP_START] = "라운드 시작",
         [TEXT_SHOP_MAX] = "최대",
-        [TEXT_SHOP_LOCKED] = "라운드 11",
-        [TEXT_HUD_LIGHTNING] = "번개"
+        [TEXT_SHOP_LOCKED] = "라운드 10",
+        [TEXT_HUD_LIGHTNING] = "LIGHTNING"
     }
 };
 
@@ -1136,6 +1419,8 @@ bool IsHangulCodepoint(int codepoint)
 /* Try common system fonts first and fall back to raylib's built-in font.
  * Shipping a CJK font would exceed the contest limit by itself. */
 static const char *uiFontRelativeCandidates[] = {
+    "assets/fonts/NotoSansKR-Subset-Bold.ttf",
+    "src/assets/fonts/NotoSansKR-Subset-Bold.ttf",
     UI_FONT_PATH,
     "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/truetype/noto/NotoSansKR-Regular.otf",
@@ -1327,7 +1612,7 @@ int *BuildUICodepoints(int *codepointCount)
         "통로에서멈추지말고이동하세요같은행이나열에서벽없이마주치면멈추고발사합니다"
         "재장전사용할수있습니다켜고끕니다모퉁이와출구를확인할때짧게사용하세요"
         "난이도상승올라갈수록더빠르고자주길을계산합니다타이밍관리가중요합니다"
-        "감갑경과규께껴꿉끄넓능대되된됩둠든들또뜻럼려맞매박방버번변별부비성센순쏘쏠쓰안압야여옵외의절접정죽줍즉착찰처충칙켭키튼퍼피함항향혀화활후완료다음";
+        "감갑경과규께껴꿉끄넓능대되된됩둠든들또뜻럼려맞매박방버번변별부비성센순쏘쏠쓰안압야여옵외의절접정죽줍즉착찰처충칙켭키튼퍼피함항향혀화활후다음";
     int extraKoreanLength = (int)strlen(extraKoreanText);
     for (int byteIndex = 0; byteIndex < extraKoreanLength; )
     {
@@ -1541,12 +1826,18 @@ TriangleHitbox GetPlayerTriangleHitbox(Vector2 position)
 
 int GetDifficultyRampLevel(void)
 {
-    if (inTutorialSequence || officialRound < 11)
+    if (inTutorialSequence || officialRound < MODIFIER_START_ROUND)
     {
         return 0;
     }
 
-    return officialRound - 10;
+    return officialRound - MODIFIER_START_ROUND + 1;
+}
+
+float GetPlayerSpeedForLevel(void)
+{
+    float levelBonus = fminf((float)(playerLevel - 1) * 0.75f, 10.0f);
+    return 58.0f + levelBonus;
 }
 
 float GetRedEnemyTrackDistance(void)
@@ -1571,17 +1862,25 @@ float GetEnemySpeedBonus(void)
 
 float GetBossSpeedBonus(void)
 {
-    return (float)GetDifficultyRampLevel() * 1.8f;
+    return (float)GetDifficultyRampLevel() * 1.15f;
 }
 
 float GetBossShootCooldown(void)
 {
-    return fmaxf(0.45f, 0.85f - ((float)GetDifficultyRampLevel() * 0.025f));
+    float pressureBonus = currentModifiers.bossPressure ? 0.10f : 0.0f;
+    return fmaxf(0.48f, 0.92f - ((float)GetDifficultyRampLevel() * 0.018f) - pressureBonus);
 }
 
 float GetBossFarSpeedMultiplier(void)
 {
-    return fminf(BOSS_FAR_SPEED_MULTIPLIER + ((float)GetDifficultyRampLevel() * 0.04f), 2.4f);
+    return fminf(BOSS_FAR_SPEED_MULTIPLIER + ((float)GetDifficultyRampLevel() * 0.03f), 2.0f);
+}
+
+bool IsTrapActiveAtCell(int x, int y)
+{
+    float cycle = TRAP_ACTIVE_TIME + TRAP_INACTIVE_TIME;
+    float offset = (float)((x * 17 + y * 11) % 100) * 0.01f;
+    return fmodf((float)GetTime() + offset, cycle) < TRAP_ACTIVE_TIME;
 }
 
 Vector2 GetFlashlightCenter(void)
@@ -1604,7 +1903,7 @@ bool IsWorldPositionVisible(Vector2 position)
         return true;
     }
 
-    if (GetDistanceBetweenPoints(position, player.position) <= TILE_SIZE * 2.6f)
+    if (GetDistanceBetweenPoints(position, player.position) <= TILE_SIZE * 2.6f * GetDarknessVisionScale())
     {
         return true;
     }
@@ -1612,7 +1911,7 @@ bool IsWorldPositionVisible(Vector2 position)
     if (currentRoundConfig.flashlightEnabled && flashlightOn)
     {
         Vector2 flashlightCenter = GetFlashlightCenter();
-        if (GetDistanceBetweenPoints(position, flashlightCenter) <= TILE_SIZE * 3.1f)
+        if (GetDistanceBetweenPoints(position, flashlightCenter) <= TILE_SIZE * 3.1f * GetDarknessVisionScale())
         {
             return true;
         }
@@ -2084,12 +2383,12 @@ void DrawMazeGrid(void)
             {
                 cellColor = (Color){ 82, 56, 18, 255 };
             }
-            else if (grid[y][x] == CELL_COIN || grid[y][x] == CELL_AMMO_PICKUP || grid[y][x] == CELL_BATTERY_PICKUP || grid[y][x] == CELL_KEY || grid[y][x] == CELL_RELIC || grid[y][x] == CELL_HEALTH_PICKUP)
+            else if (grid[y][x] == CELL_COIN || grid[y][x] == CELL_AMMO_PICKUP || grid[y][x] == CELL_BATTERY_PICKUP || grid[y][x] == CELL_KEY || grid[y][x] == CELL_HEALTH_PICKUP || grid[y][x] == CELL_TRAP)
             {
                 cellColor = MAZE_PATH_COLOR;
             }
 
-            if (!cellVisible)
+            if (!cellVisible && grid[y][x] != CELL_TRAP)
             {
                 cellColor = (Color){ 6, 6, 6, 255 };
             }
@@ -2122,7 +2421,7 @@ void DrawMazeGrid(void)
                            (Vector2){ position.x + size.x * 0.25f, position.y + size.y * 0.75f }, fmaxf(2.0f, 2.0f * layout.drawScale), GOLD);
             }
 
-            if (cellVisible || keyPulse > 0.02f || drawHiddenExtraPulse)
+            if (cellVisible || keyPulse > 0.02f || drawHiddenExtraPulse || grid[y][x] == CELL_TRAP)
             {
                 Vector2 pickupCenter = { position.x + size.x * 0.5f, position.y + size.y * 0.5f };
                 float pickupRadius = fmaxf(3.0f, 4.5f * layout.drawScale);
@@ -2166,15 +2465,6 @@ void DrawMazeGrid(void)
                     DrawLineEx((Vector2){ pickupCenter.x + pickupRadius * 0.72f, pickupCenter.y }, (Vector2){ pickupCenter.x + pickupRadius * 0.72f, pickupCenter.y + pickupRadius * 0.55f }, 2.0f, GOLD);
                     DrawLineEx((Vector2){ pickupCenter.x + pickupRadius * 1.08f, pickupCenter.y }, (Vector2){ pickupCenter.x + pickupRadius * 1.08f, pickupCenter.y + pickupRadius * 0.45f }, 2.0f, GOLD);
                 }
-                else if (grid[y][x] == CELL_RELIC)
-                {
-                    float pulse = 0.65f + 0.35f * sinf((float)GetTime() * 6.0f);
-                    Color relicColor = (Color){ 120, 230, 255, 255 };
-                    DrawCircleV(pickupCenter, pickupRadius * (2.0f + pulse), Fade(relicColor, 0.18f));
-                    DrawPoly(pickupCenter, 6, pickupRadius * 1.35f, 30.0f, Fade(relicColor, 0.55f));
-                    DrawPolyLines(pickupCenter, 6, pickupRadius * 1.45f, 30.0f, relicColor);
-                    DrawCircleV(pickupCenter, pickupRadius * 0.35f, RAYWHITE);
-                }
                 else if (grid[y][x] == CELL_HEALTH_PICKUP)
                 {
                     Color healthColor = cellVisible ? (Color){ 190, 70, 255, 255 } : Fade((Color){ 190, 70, 255, 255 }, 0.36f + 0.32f * softPickupPulse);
@@ -2182,6 +2472,25 @@ void DrawMazeGrid(void)
                     DrawRectangleRounded((Rectangle){ pickupCenter.x - pickupRadius * 0.35f, pickupCenter.y - pickupRadius * 1.25f, pickupRadius * 0.7f, pickupRadius * 2.5f }, 0.2f, 5, healthColor);
                     DrawRectangleRounded((Rectangle){ pickupCenter.x - pickupRadius * 1.25f, pickupCenter.y - pickupRadius * 0.35f, pickupRadius * 2.5f, pickupRadius * 0.7f }, 0.2f, 5, healthColor);
                     DrawRectangleLinesEx((Rectangle){ pickupCenter.x - pickupRadius * 1.25f, pickupCenter.y - pickupRadius * 1.25f, pickupRadius * 2.5f, pickupRadius * 2.5f }, 1.0f, Fade(RAYWHITE, 0.65f));
+                }
+                else if (grid[y][x] == CELL_TRAP)
+                {
+                    bool trapActive = IsTrapActiveAtCell(x, y);
+                    float pulse = trapActive ? (0.55f + 0.45f * sinf((float)GetTime() * 10.0f)) : 0.25f;
+                    Color trapColor = trapActive ? (Color){ 255, 70, 90, 255 } : (Color){ 90, 95, 115, 255 };
+                    if (!cellVisible)
+                    {
+                        trapColor = trapActive ? Fade(trapColor, 0.92f) : Fade(trapColor, 0.55f);
+                    }
+                    DrawCircleV(pickupCenter, pickupRadius * 1.35f, Fade(trapColor, trapActive ? 0.24f + 0.28f * pulse : 0.18f));
+                    DrawCircleV(pickupCenter, pickupRadius * 0.92f, trapColor);
+                    DrawRectangleRounded((Rectangle){ pickupCenter.x - pickupRadius * 0.52f, pickupCenter.y - pickupRadius * 1.34f, pickupRadius * 1.04f, pickupRadius * 0.42f }, 0.25f, 5, Fade(RAYWHITE, trapActive ? 0.82f : 0.35f));
+                    DrawLineEx((Vector2){ pickupCenter.x + pickupRadius * 0.18f, pickupCenter.y - pickupRadius * 1.36f },
+                               (Vector2){ pickupCenter.x + pickupRadius * 0.82f, pickupCenter.y - pickupRadius * 1.78f }, fmaxf(1.0f, 1.6f * layout.drawScale), trapColor);
+                    if (trapActive)
+                    {
+                        DrawCircleV((Vector2){ pickupCenter.x + pickupRadius * 0.98f, pickupCenter.y - pickupRadius * 1.88f }, pickupRadius * (0.28f + 0.18f * pulse), GOLD);
+                    }
                 }
             }
         }
@@ -2438,7 +2747,7 @@ void MovePlayerWithCollision(Vector2 direction, float distance)
 void InitPlayer(void)
 {
     player.radius = 8.0f;
-    player.speed = 58.0f;
+    player.speed = GetPlayerSpeedForLevel();
     player.facingAngle = 0.0f;
     player.position.x = TILE_SIZE * 1.5f;
     player.position.y = TILE_SIZE * 1.5f;
@@ -2449,10 +2758,46 @@ void UpdatePlayer(void)
 {
     Vector2 movement = { 0 };
 
+    if (IsKeyPressed(KEY_TAB))
+    {
+        if (IsTacticalMapAvailable())
+        {
+            if (tacticalMapOpen)
+            {
+                tacticalMapOpen = false;
+            }
+            else if (mapBattery > 0.0f)
+            {
+                tacticalMapOpen = true;
+            }
+            else
+            {
+                SpawnFloatingNotice(player.position, "MAPA SEM BATERIA", (Color){ 255, 205, 60, 255 });
+            }
+        }
+        else
+        {
+            tacticalMapOpen = false;
+            SpawnFloatingNotice(player.position, "MAPA BLOQUEADO", (Color){ 255, 70, 90, 255 });
+        }
+    }
+
     if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP)) movement.y -= 1.0f;
     if (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN)) movement.y += 1.0f;
     if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) movement.x -= 1.0f;
     if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) movement.x += 1.0f;
+
+    if (playerDashCooldown > 0.0f)
+    {
+        playerDashCooldown -= GetStableFrameTime();
+        if (playerDashCooldown < 0.0f) playerDashCooldown = 0.0f;
+    }
+
+    if (playerDashTimer > 0.0f)
+    {
+        playerDashTimer -= GetStableFrameTime();
+        if (playerDashTimer < 0.0f) playerDashTimer = 0.0f;
+    }
 
     if (movement.x != 0.0f || movement.y != 0.0f)
     {
@@ -2463,7 +2808,44 @@ void UpdatePlayer(void)
         movement.y /= length;
         player.facingAngle = atan2f(movement.y, movement.x);
 
-        MovePlayerWithCollision(movement, player.speed * GetStableFrameTime());
+        if ((IsKeyPressed(KEY_LEFT_SHIFT) || IsKeyPressed(KEY_RIGHT_SHIFT)) && playerDashCooldown <= 0.0f && playerDashCharges > 0)
+        {
+            playerDashTimer = PLAYER_DASH_TIME;
+            playerDashCooldown = PLAYER_DASH_COOLDOWN;
+            playerDashCharges--;
+            playerDamageCooldown = fmaxf(playerDamageCooldown, PLAYER_DASH_DAMAGE_GRACE);
+            SpawnFloatingNotice(player.position, "DASH", (Color){ 120, 230, 255, 255 });
+            SpawnParticleBurst(player.position, (Color){ 120, 230, 255, 255 }, 18, 90.0f, 3.0f);
+            if (gameAudioLoaded)
+            {
+                PlaySound(dashSound);
+            }
+        }
+
+        float speedMultiplier = (playerDashTimer > 0.0f) ? PLAYER_DASH_SPEED_MULTIPLIER : 1.0f;
+        MovePlayerWithCollision(movement, player.speed * speedMultiplier * GetStableFrameTime());
+    }
+}
+
+void UpdateTacticalMapBattery(void)
+{
+    if (!tacticalMapOpen)
+    {
+        return;
+    }
+
+    if (!IsTacticalMapAvailable() || mapBattery <= 0.0f)
+    {
+        tacticalMapOpen = false;
+        return;
+    }
+
+    mapBattery -= MAP_DRAIN_AMOUNT * GetStableFrameTime();
+    if (mapBattery <= 0.0f)
+    {
+        mapBattery = 0.0f;
+        tacticalMapOpen = false;
+        SpawnFloatingNotice(player.position, "MAPA SEM BATERIA", (Color){ 255, 205, 60, 255 });
     }
 }
 
@@ -2499,6 +2881,60 @@ void UpdateFloatingNotices(void)
             {
                 floatingNotices[i].timer = 0.0f;
             }
+        }
+    }
+}
+
+void SpawnParticleBurst(Vector2 position, Color color, int count, float speed, float radius)
+{
+    for (int i = 0; i < count; i++)
+    {
+        int slot = -1;
+        for (int j = 0; j < MAX_PARTICLES; j++)
+        {
+            if (particles[j].timer <= 0.0f)
+            {
+                slot = j;
+                break;
+            }
+        }
+
+        if (slot < 0)
+        {
+            return;
+        }
+
+        float angle = ((float)GetRandomValue(0, 6283) / 1000.0f);
+        float velocity = speed * (0.35f + (float)GetRandomValue(0, 100) / 100.0f);
+        particles[slot].position = position;
+        particles[slot].velocity = (Vector2){ cosf(angle) * velocity, sinf(angle) * velocity };
+        particles[slot].color = color;
+        particles[slot].radius = radius * (0.55f + (float)GetRandomValue(0, 80) / 100.0f);
+        particles[slot].maxTimer = PARTICLE_TIME * (0.65f + (float)GetRandomValue(0, 80) / 100.0f);
+        particles[slot].timer = particles[slot].maxTimer;
+    }
+}
+
+void UpdateParticles(void)
+{
+    float dt = GetStableFrameTime();
+
+    for (int i = 0; i < MAX_PARTICLES; i++)
+    {
+        if (particles[i].timer <= 0.0f)
+        {
+            continue;
+        }
+
+        particles[i].timer -= dt;
+        particles[i].position.x += particles[i].velocity.x * dt;
+        particles[i].position.y += particles[i].velocity.y * dt;
+        particles[i].velocity.x *= 0.94f;
+        particles[i].velocity.y *= 0.94f;
+
+        if (particles[i].timer < 0.0f)
+        {
+            particles[i].timer = 0.0f;
         }
     }
 }
@@ -2546,6 +2982,7 @@ void CollectCurrentCellPickup(void)
     {
         roundPickupsCollected++;
         playerTotalAmmo += PICKUP_AMMO_VALUE;
+        ClampProgressState();
         SpawnFloatingNotice(GetCellCenter(cellX, cellY), TextFormat("+%d MUNICAO", PICKUP_AMMO_VALUE), HUD_BORDER_COLOR);
         grid[cellY][cellX] = CELL_PATH;
     }
@@ -2553,25 +2990,22 @@ void CollectCurrentCellPickup(void)
     {
         roundPickupsCollected++;
         flashlightBattery += PICKUP_BATTERY_VALUE;
+        mapBattery += PICKUP_BATTERY_VALUE;
         if (flashlightBattery > FLASHLIGHT_MAX_BATTERY)
         {
             flashlightBattery = FLASHLIGHT_MAX_BATTERY;
         }
-        SpawnFloatingNotice(GetCellCenter(cellX, cellY), "+15 BATERIA", GOLD);
+        if (mapBattery > MAP_MAX_BATTERY)
+        {
+            mapBattery = MAP_MAX_BATTERY;
+        }
+        SpawnFloatingNotice(GetCellCenter(cellX, cellY), "+15 BATERIAS", GOLD);
         grid[cellY][cellX] = CELL_PATH;
     }
     else if (cell == CELL_KEY)
     {
         roundPickupsCollected++;
         OpenLockedExit();
-        grid[cellY][cellX] = CELL_PATH;
-    }
-    else if (cell == CELL_RELIC)
-    {
-        roundPickupsCollected++;
-        playerCoins += PICKUP_RELIC_COINS;
-        lightningCharges++;
-        SpawnFloatingNotice(GetCellCenter(cellX, cellY), "RELIQUIA +RAIO", (Color){ 120, 230, 255, 255 });
         grid[cellY][cellX] = CELL_PATH;
     }
     else if (cell == CELL_HEALTH_PICKUP)
@@ -2584,6 +3018,29 @@ void CollectCurrentCellPickup(void)
             playerHealth = maxHealth;
         }
         SpawnFloatingNotice(GetCellCenter(cellX, cellY), "+15 VIDA", (Color){ 190, 70, 255, 255 });
+        grid[cellY][cellX] = CELL_PATH;
+    }
+    else if (cell == CELL_TRAP)
+    {
+        if (!IsTrapActiveAtCell(cellX, cellY))
+        {
+            return;
+        }
+
+        if (playerDashTimer <= 0.0f && DamagePlayer(TRAP_DAMAGE))
+        {
+            SpawnFloatingNotice(GetCellCenter(cellX, cellY), "-18 ARMADILHA", (Color){ 255, 70, 90, 255 });
+            SpawnParticleBurst(GetCellCenter(cellX, cellY), (Color){ 255, 70, 90, 255 }, 24, 120.0f, 3.0f);
+            if (gameAudioLoaded && playerAlive)
+            {
+                PlaySound(trapSound);
+            }
+        }
+        else
+        {
+            SpawnFloatingNotice(GetCellCenter(cellX, cellY), "EVADIU", (Color){ 120, 230, 255, 255 });
+            SpawnParticleBurst(GetCellCenter(cellX, cellY), (Color){ 120, 230, 255, 255 }, 18, 90.0f, 2.5f);
+        }
         grid[cellY][cellX] = CELL_PATH;
     }
 }
@@ -2621,6 +3078,11 @@ void UpdateFlashlight(void)
         }
         else if (flashlightBattery > 0.0f)
         {
+            flashlightBattery -= FLASHLIGHT_TOGGLE_COST;
+            if (flashlightBattery < 0.0f)
+            {
+                flashlightBattery = 0.0f;
+            }
             flashlightOn = true;
             if (gameAudioLoaded)
             {
@@ -2634,12 +3096,13 @@ void UpdateFlashlight(void)
 
 bool IsLightningAvailableThisRound(void)
 {
-    return !inTutorialSequence && officialRound >= 11;
+    return !inTutorialSequence && officialRound >= 10;
 }
 
 void TriggerLightningReveal(void)
 {
     lightningRevealTimer = LIGHTNING_REVEAL_TIME;
+    SpawnParticleBurst(player.position, (Color){ 120, 230, 255, 255 }, 48, 170.0f, 4.0f);
 
     if (gameAudioLoaded)
     {
@@ -2725,6 +3188,11 @@ void UpdatePlayerReload(void)
 
 bool DidPlayerReachExit(void)
 {
+    if (!playerAlive)
+    {
+        return false;
+    }
+
     int playerCellX = (int)(player.position.x / TILE_SIZE);
     int playerCellY = (int)(player.position.y / TILE_SIZE);
 
@@ -2742,7 +3210,12 @@ void FinishRoundRewards(void)
         pendingEvolutionXp = EVOLUTION_ROUND_XP + (officialRound * 10) + (roundPickupsCollected * EVOLUTION_PICKUP_XP);
         playerCoins += pendingRoundBonus;
         AddEvolutionXp(pendingEvolutionXp);
-        SaveProgressForRound(officialRound + 1, (officialRound + 1 > bestOfficialRound) ? officialRound + 1 : bestOfficialRound);
+        roundStartSnapshotActive = false;
+        if (officialRound + 1 > bestOfficialRound)
+        {
+            bestOfficialRound = officialRound + 1;
+        }
+        SaveProgressForRound(officialRound + 1, bestOfficialRound);
     }
 }
 
@@ -3030,7 +3503,7 @@ void InitEnemies(void)
 void InitBossEnemy(void)
 {
     bossEnemy.radius = 10.0f;
-    bossEnemy.speed = fmaxf(1.0f, player.speed - 3.0f) + GetBossSpeedBonus();
+    bossEnemy.speed = fmaxf(1.0f, player.speed - 13.0f) + GetBossSpeedBonus();
     bossEnemy.active = true;
     bossEnemy.type = ENEMY_BOSS;
     bossEnemy.hitsTaken = 0;
@@ -3095,16 +3568,19 @@ void ApplyRoundConfig(void)
         playerTotalAmmo = playerMaxAmmo;
         playerAmmo = PLAYER_MAGAZINE_SIZE;
         flashlightBattery = FLASHLIGHT_MAX_BATTERY;
+        mapBattery = MAP_MAX_BATTERY;
     }
 
     if (!inTutorialSequence && (officialRound == 1 || officialRound % 5 == 0))
     {
         flashlightBattery = FLASHLIGHT_MAX_BATTERY;
+        mapBattery = MAP_MAX_BATTERY;
     }
 }
 
 void SetupRound(void)
 {
+    currentModifiers = inTutorialSequence ? (RoundModifiers){ 0 } : GetRoundModifiers(officialRound);
     playerAlive = true;
     playerHealth = inTutorialSequence ? PLAYER_MAX_HEALTH : playerMaxHealth;
     playerAmmo = (playerTotalAmmo < PLAYER_MAGAZINE_SIZE) ? playerTotalAmmo : PLAYER_MAGAZINE_SIZE;
@@ -3115,11 +3591,21 @@ void SetupRound(void)
     roundShotsFired = 0;
     roundTookDamage = false;
     pendingRoundBonus = 0;
+    pendingEvolutionXp = 0;
+    victoryRoundsOpen = false;
     for (int i = 0; i < MAX_FLOATING_NOTICES; i++)
     {
         floatingNotices[i].timer = 0.0f;
     }
+    for (int i = 0; i < MAX_PARTICLES; i++)
+    {
+        particles[i].timer = 0.0f;
+    }
     playerDamageCooldown = 0.0f;
+    playerDashTimer = 0.0f;
+    playerDashCooldown = 0.0f;
+    playerDashCharges = GetRoundDashMaxCharges();
+    tacticalMapOpen = false;
     waitingForVictorySound = false;
     lightningAutoTimer = 0.0f;
     lightningRevealTimer = 0.0f;
@@ -3129,6 +3615,7 @@ void SetupRound(void)
     InitEnemies();
     InitBossEnemy();
     ApplyRoundConfig();
+    CaptureRoundStartSnapshot();
     PlaceRoundPickups(currentRoundConfig.flashlightEnabled);
     roundNeedsSetup = false;
 }
@@ -3144,7 +3631,7 @@ const char *GetIntroBody(void)
     {
         return "Goal: guide the yellow triangle to the green exit.\n"
                "Move with WASD or arrow keys.\n"
-               "Shoot with SPACE, reload with R, and use the top buttons for language.\n"
+               "Shoot with SPACE, reload with R, dash with SHIFT, and open the map with TAB.\n"
                "Enemies remove health, shots can knock them out for 5 seconds.\n"
                "Each tutorial step introduces one part of the game.";
     }
@@ -3152,7 +3639,7 @@ const char *GetIntroBody(void)
     {
         return "Objetivo: lleva el triangulo amarillo hasta la salida verde.\n"
                "Muevete con WASD o las flechas.\n"
-               "Dispara con ESPACIO, recarga con R y usa los botones de arriba para el idioma.\n"
+               "Dispara con ESPACIO, recarga con R, dash con SHIFT y mapa con TAB.\n"
                "Los enemigos quitan vida; los disparos pueden dejarlos K.O. por 5 segundos.\n"
                "Cada tutorial presenta una parte del juego.";
     }
@@ -3160,13 +3647,13 @@ const char *GetIntroBody(void)
     {
         return "목표: 노란 삼각형을 초록 출구까지 이동하세요.\n"
                "WASD 또는 방향키로 움직입니다.\n"
-               "스페이스로 발사, R로 재장전, 위 버튼으로 언어를 바꿉니다.\n"
+               "스페이스로 발사, R로 재장전, SHIFT와 TAB도 사용합니다.\n"
                "적에게 닿으면 체력이 감소하고, 총알은 적을 5초 동안 기절시킵니다.\n"
                "튜토리얼은 게임의 규칙을 단계별로 알려줍니다.";
     }
     return "Objetivo: leve o triangulo amarelo ate a saida verde.\n"
            "Mova com WASD ou setas.\n"
-           "Atire com ESPACO, recarregue com R e use os botoes do topo para idioma.\n"
+           "Atire com ESPACO, recarregue com R, use SHIFT para dash e TAB para mapa.\n"
            "Inimigos tiram vida; tiros podem nocautea-los por 5 segundos.\n"
            "Cada tutorial apresenta uma parte do jogo.";
 }
@@ -3190,80 +3677,88 @@ const char *GetRoundInfoBody(void)
     {
         if (currentLanguage == LANGUAGE_EN)
         {
-            if (tutorialRound == 1) return "Red enemies patrol the maze and chase when close.\nTouching one deals 25 damage, not instant death.\nYou have 100 health and brief invulnerability after damage.\nDo not stand still in corridors; keep moving toward the green exit.";
-            if (tutorialRound == 2) return "Pink enemies are shooters.\nIf they line up with you in a clear row or column, they stop and fire.\nUse SPACE to shoot. Five hits knock any enemy out for 5 seconds.\nYour weapon has 15 shots; press R to reload.";
-            if (tutorialRound == 3) return "The flashlight is available.\nPress C to toggle it. It reveals more of the maze but spends battery.\nTutorial rounds always start with 50 percent battery.\nUse it in short bursts to check corners and find the exit.";
-            return "The purple boss is the square enemy.\nIt pathfinds toward you, shoots when aligned, and speeds up if far away.\nIt can also be knocked out for 5 seconds after five hits.\nThe game limits crowding so more than two enemies should not trap you at once.";
+            if (tutorialRound == 1) return "Movement, dash and map.\nWASD/arrows move. SHIFT dashes in your facing direction, with limited charges per round.\nTAB opens the tactical map while its battery lasts; close it to save charge.\nReach the green exit tile to advance.";
+            if (tutorialRound == 2) return "Shooting and reload.\nSPACE fires toward the triangle tip. Each shot spends one bullet from the 30-shot magazine.\nR reloads when you have reserve ammo. Five hits knock any enemy out for 5 seconds.\nPink enemies shoot only when aligned in a clear row or column.";
+            if (tutorialRound == 3) return "Light and resources.\nC toggles the flashlight; it reveals farther but drains its own battery.\nCoins buy upgrades, ammo boxes give 10 bullets, health boxes heal, and battery boxes refill tools.\nResources are kept only when the round is won.";
+            return "Boss, key and modifiers.\nThe purple square boss chases, shoots when aligned, and speeds up when far away.\nFrom locked rounds, find the golden key before stepping on the green exit.\nLater rounds add traps, low visibility, map jams and dash limits.";
         }
         if (currentLanguage == LANGUAGE_KO)
         {
-            if (tutorialRound == 1) return "빨간 적은 미로를 순찰하고 가까우면 추격합니다.\n닿으면 즉시 죽지 않고 체력이 25 감소합니다.\n플레이어 체력은 100이고 피해 후 잠시 무적입니다.\n통로에서 멈추지 말고 초록 출구로 이동하세요.";
-            if (tutorialRound == 2) return "분홍 적은 총을 쏘는 적입니다.\n같은 행이나 열에서 벽 없이 마주치면 멈추고 발사합니다.\n스페이스로 쏘세요. 적은 5번 맞으면 5초 동안 기절합니다.\n탄약은 15발이고 R로 재장전합니다.";
+            if (tutorialRound == 1) return "이동과 추가 조작.\nWASD 또는 방향키로 움직이고 TAB을 사용합니다.\nSHIFT는 라운드마다 3번만 사용할 수 있습니다.\n빨간 적은 가까우면 추격합니다. 초록 출구로 가세요.";
+            if (tutorialRound == 2) return "분홍 적은 총을 쏘는 적입니다.\n같은 행이나 열에서 벽 없이 마주치면 멈추고 발사합니다.\n스페이스로 쏘세요. 적은 5번 맞으면 5초 동안 기절합니다.\n탄약은 30발이고 R로 재장전합니다.";
             if (tutorialRound == 3) return "손전등을 사용할 수 있습니다.\nC로 켜고 끕니다. 더 넓게 보이지만 배터리를 소모합니다.\n튜토리얼 라운드는 항상 배터리 100퍼센트로 시작합니다.\n모퉁이와 출구를 확인할 때 짧게 사용하세요.";
             return "보라색 사각형은 보스입니다.\n플레이어를 찾아오고, 일직선이면 쏘며, 멀어지면 빨라집니다.\n보스도 5번 맞으면 5초 동안 기절합니다.\n게임은 두 명 넘는 적이 동시에 플레이어를 막지 않게 조정합니다.";
         }
         if (currentLanguage == LANGUAGE_ES)
         {
-            if (tutorialRound == 1) return "Los enemigos rojos patrullan el laberinto y persiguen de cerca.\nTocarlos causa 25 de dano, no muerte instantanea.\nTienes 100 de vida y quedas invulnerable un instante despues de recibir dano.\nNo te quedes quieto en los pasillos; avanza hacia la salida verde.";
-            if (tutorialRound == 2) return "Los enemigos rosas disparan.\nSi se alinean contigo en linea recta sin pared de por medio, se detienen y disparan.\nUsa ESPACIO para disparar. Cinco impactos dejan K.O. a cualquier enemigo por 5 segundos.\nTu arma tiene 15 balas; pulsa R para recargar.";
-            if (tutorialRound == 3) return "La linterna ya esta disponible.\nPulsa C para encenderla o apagarla. Revela mas del laberinto, pero gasta bateria.\nEn el tutorial, cada ronda empieza con 100 por ciento de bateria.\nUsala en rafagas cortas para revisar esquinas y encontrar la salida.";
-            return "El jefe morado es el enemigo cuadrado.\nCalcula el camino hacia ti, dispara cuando se alinea y acelera si esta lejos.\nTambien puede quedar K.O. por 5 segundos tras cinco impactos.\nEl juego limita el acoso para que mas de dos enemigos no te atrapen a la vez.";
+            if (tutorialRound == 1) return "Movimiento, dash y mapa.\nWASD/flechas mueven. SHIFT hace dash en la direccion actual, con cargas limitadas por ronda.\nTAB abre el mapa tactico mientras tenga bateria; cierralo para ahorrar carga.\nPisa la salida verde para avanzar.";
+            if (tutorialRound == 2) return "Disparo y recarga.\nESPACIO dispara hacia la punta del triangulo. Cada disparo gasta una bala del cargador de 30.\nR recarga si tienes municion de reserva. Cinco impactos dejan K.O. a cualquier enemigo por 5 segundos.\nLos rosas disparan solo si te ven en fila o columna sin pared.";
+            if (tutorialRound == 3) return "Luz y recursos.\nC enciende o apaga la linterna; revela mas, pero consume su propia bateria.\nMonedas compran mejoras, cajas de municion dan 10 balas, vida cura y baterias recargan herramientas.\nLos recursos se guardan solo si ganas la ronda.";
+            return "Jefe, llave y modificadores.\nEl jefe morado persigue, dispara alineado y acelera cuando esta lejos.\nEn rondas cerradas, encuentra la llave dorada antes de pisar la salida verde.\nLuego aparecen trampas, baja vision, mapa bloqueado y menos dash.";
         }
 
-        if (tutorialRound == 1) return "Inimigos vermelhos patrulham o labirinto e perseguem de perto.\nEncostar neles causa 25 de dano, nao morte instantanea.\nVoce tem 100 de vida e fica invulneravel por um instante apos dano.\nNao pare nos corredores; avance ate a saida verde.";
-        if (tutorialRound == 2) return "Inimigos rosas atiram.\nSe ficarem alinhados com voce em linha reta sem parede, eles param e disparam.\nUse ESPACO para atirar. Cinco acertos nocauteiam qualquer inimigo por 5 segundos.\nSua arma tem 15 balas; pressione R para recarregar.";
-            if (tutorialRound == 3) return "A lanterna foi liberada.\nPressione C para ligar ou desligar. Ela revela mais do labirinto, mas gasta bateria.\nNo tutorial, todo round comeca com 50 por cento de bateria.\nUse em rajadas curtas para checar esquinas e encontrar a saida.";
-        return "O chefao roxo e o inimigo quadrado.\nEle calcula caminho ate voce, atira quando fica alinhado e acelera se estiver longe.\nEle tambem cai por 5 segundos depois de cinco acertos.\nO jogo limita cercos para mais de dois inimigos nao prenderem voce de uma vez.";
+        if (tutorialRound == 1) return "Movimento, dash e mapa.\nWASD/setas movem. SHIFT da dash na direcao atual, com cargas limitadas por round.\nTAB abre o mapa tatico enquanto a bateria dele durar; feche para economizar carga.\nPise no bloco verde para avancar.";
+        if (tutorialRound == 2) return "Tiro e recarga.\nESPACO atira para onde o triangulo aponta. Cada tiro gasta 1 bala do pente de 30.\nR recarrega quando existe municao reserva. Cinco acertos nocauteiam qualquer inimigo por 5 segundos.\nRosas so atiram quando enxergam voce em linha ou coluna sem parede.";
+        if (tutorialRound == 3) return "Luz e recursos.\nC liga/desliga a lanterna; ela revela mais longe, mas gasta a propria bateria.\nMoedas compram melhorias, caixas de municao dao 10 balas, vida cura e baterias recarregam ferramentas.\nRecursos so ficam se voce vencer o round.";
+        return "Chefao, chave e modificadores.\nO quadrado roxo persegue, atira quando fica alinhado e acelera quando esta longe.\nEm rounds trancados, pegue a chave dourada antes de pisar no bloco verde.\nDepois entram armadilhas, pouca visao, mapa bloqueado e menos dash.";
     }
 
     if (currentLanguage == LANGUAGE_EN)
     {
-        if (officialRound == 1) return "Official run starts now.\nRounds 1 and 2 use red patrol enemies and pink shooters.\nYou start with 100 health, 100 total ammo, and 15 loaded shots.\nReach the green exit to advance.";
+        if (officialRound == 1) return "Official run starts now.\nRounds 1 and 2 use red patrol enemies and pink shooters.\nYou start with 100 health and 30 loaded shots.\nReach the green exit to advance.";
         if (officialRound == 3) return "Flashlight rounds begin.\nRounds 3 and 4 include red and pink enemies plus limited visibility.\nYour battery does not refill every round, so spend it carefully.\nIt refills on round 5 and then every 5 rounds.";
         if (officialRound == 4) return "Security doors are now active.\nFind the golden key before the exit opens.\nCoins, ammo, health and battery cells can appear in side paths.";
-        if (officialRound == 5) return "Round 5 refills the flashlight battery to 50 percent.\nThis round focuses on the purple boss only.\nKeep moving, break alignment when it shoots, and hit it five times to knock it out.";
+        if (officialRound == 5) return "Round 5 refills tool batteries to 100 percent.\nThis round focuses on the purple boss only.\nKeep moving, break alignment when it shoots, and hit it five times to knock it out.";
         if (officialRound == 6) return "Rounds 6 and 7 combine the boss with red enemies.\nThe boss hunts directly while red enemies pressure nearby routes.\nUse shots to create space and avoid being boxed in.";
-        if (officialRound == 7) return "Overload relics can now appear.\nThey grant coins and one extra lightning charge.\nRisky side paths can pay for your next shop upgrade.";
-        if (officialRound == 8) return "Rounds 8 and 9 add every enemy type except flashlight darkness.\nRed enemies chase, pink enemies shoot, and the boss accelerates from far away.\nWatch the music volume: it rises when danger is close.";
-        if (officialRound == 10) return "From round 10 on, everything is active: red, pink, boss, and flashlight.\nThe battery refills only on rounds 10, 15, 20, and so on.\nPlan routes before switching the flashlight off.";
-        if (officialRound == 15) return "Difficulty ramp is now active.\nEnemies become faster and use pathfinding more often each round.\nKnockouts, reload timing, and battery control matter more from here.";
-        return "Cross the maze and reach the green exit.\nCollect coins, ammo, health and battery cells when they appear.\nStay mobile and use knockouts to open a path.";
+        if (officialRound == 7) return "Side paths can now hold stronger rewards.\nCoins, ammo, health and battery are only kept when the round is won.\nIf you die, resources return to the pre-round state.";
+        if (officialRound == 8) return "Rounds 8 and 9 add every enemy type except flashlight darkness.\nRed enemies chase, pink enemies shoot, and the boss accelerates from far away.\nKeep moving and break straight lines before shots.";
+        if (officialRound == 9) return "Bomb traps are active.\nThey blink: 3 seconds armed, 3 seconds safe.\nCross while they are off or dash through with SHIFT.\nDash has only 3 charges per round, so do not waste it.";
+        if (officialRound == 10) return "Lightning is now active.\nEvery 15 seconds the whole maze flashes for 3 seconds.\nThe shop can sell extra manual charges for F.\nUse lightning when the key, exit or boss route is unclear.";
+        if (officialRound == 15) return "The maze keeps changing from here.\nExit placement, enemy speed and pathfinding continue scaling every round.\nKnockouts, reload timing, and battery control matter more now.";
+        if (officialRound == 16) return "Round modifiers keep rotating.\nSome rounds reduce visibility, jam TAB map, add traps, reduce dash charges or pressure boss timing.\nThe status panel shows the active modifier list.\nTreat each modifier as a small challenge mode.";
+        return "Round briefing.\nWASD/arrows move, SPACE shoots, R reloads, and SHIFT dashes with limited charges.\nTAB opens the map while its battery lasts; C uses flashlight when unlocked; F spends lightning charges.\nFind the key if the exit is locked, then step on the green tile to advance.";
     }
     if (currentLanguage == LANGUAGE_ES)
     {
-        if (officialRound == 1) return "La partida oficial empieza ahora.\nLas rondas 1 y 2 usan enemigos rojos de patrulla y rosas que disparan.\nEmpiezas con 100 de vida, 100 balas totales y 15 cargadas.\nLlega a la salida verde para avanzar.";
+        if (officialRound == 1) return "La partida oficial empieza ahora.\nLas rondas 1 y 2 usan enemigos rojos de patrulla y rosas que disparan.\nEmpiezas con 100 de vida y 30 balas cargadas.\nLlega a la salida verde para avanzar.";
         if (officialRound == 3) return "Empiezan las rondas con linterna.\nLas rondas 3 y 4 tienen rojos, rosas y vision limitada.\nLa bateria no se recarga cada ronda; usala con cuidado.\nSe recarga en la ronda 5 y luego cada 5 rondas.";
         if (officialRound == 4) return "Las puertas de seguridad estan activas.\nEncuentra la llave dorada antes de abrir la salida.\nHay monedas, municion, vida y bateria en rutas laterales.";
         if (officialRound == 5) return "La ronda 5 recarga la bateria de la linterna al 50 por ciento.\nEsta ronda se centra solo en el jefe morado.\nSigue moviendote, rompe la alineacion cuando dispare y acierta cinco veces para dejarlo K.O.";
         if (officialRound == 6) return "Las rondas 6 y 7 combinan al jefe con enemigos rojos.\nEl jefe te persigue directo mientras los rojos presionan las rutas cercanas.\nUsa disparos para abrir espacio y evita quedar acorralado.";
-        if (officialRound == 7) return "Pueden aparecer reliquias de sobrecarga.\nDan monedas y una carga extra de rayo.\nLas rutas peligrosas pueden pagar tu proxima mejora.";
-        if (officialRound == 8) return "Las rondas 8 y 9 suman todos los tipos de enemigo menos la oscuridad de la linterna.\nLos rojos persiguen, los rosas disparan y el jefe acelera cuando esta lejos.\nPresta atencion a la musica: sube cuando el peligro esta cerca.";
-        if (officialRound == 10) return "Desde la ronda 10, todo esta activo: rojo, rosa, jefe y linterna.\nLa bateria solo se recarga en las rondas 10, 15, 20 y asi sucesivamente.\nPlanea la ruta antes de apagar la linterna.";
-        if (officialRound == 15) return "La dificultad creciente ya esta activa.\nLos enemigos se vuelven mas rapidos y calculan camino con mas frecuencia cada ronda.\nEl K.O., el tiempo de recarga y la gestion de bateria importan mas desde aqui.";
-        return "Cruza el laberinto y llega a la salida verde.\nRecoge monedas, municion, vida y bateria cuando aparezcan.\nMantente en movimiento y usa los K.O. para abrir camino.";
+        if (officialRound == 7) return "Las rutas laterales pueden tener mejores recompensas.\nMonedas, municion, vida y bateria solo se guardan si ganas.\nSi mueres, todo vuelve al estado previo a la ronda.";
+        if (officialRound == 8) return "Las rondas 8 y 9 suman todos los tipos de enemigo menos la oscuridad de la linterna.\nLos rojos persiguen, los rosas disparan y el jefe acelera cuando esta lejos.\nSigue moviendote y rompe lineas rectas antes de los disparos.";
+        if (officialRound == 9) return "Las bombas trampa estan activas.\nParpadean: 3 segundos armadas, 3 segundos seguras.\nCruza cuando esten apagadas o usa SHIFT.\nEl dash tiene solo 3 cargas por ronda.";
+        if (officialRound == 10) return "El rayo ya esta disponible.\nCada 15 segundos todo el laberinto aparece por 3 segundos.\nLa tienda vende cargas manuales para F.\nUsalo cuando la llave, la salida o la ruta del jefe no esten claras.";
+        if (officialRound == 15) return "El laberinto sigue cambiando desde aqui.\nLa salida, velocidad enemiga y calculo de caminos continuan escalando cada ronda.\nEl K.O., la recarga y la bateria importan mas ahora.";
+        if (officialRound == 16) return "Los modificadores siguen rotando.\nAlgunas rondas reducen vision, bloquean TAB, suman trampas, bajan dash o presionan al jefe.\nEl panel de estado muestra la lista activa.\nCada modificador funciona como un pequeno modo desafio.";
+        return "Resumen de ronda.\nWASD/flechas mueven, ESPACIO dispara, R recarga y SHIFT hace dash con cargas limitadas.\nTAB abre el mapa mientras tenga bateria; C usa linterna cuando este disponible; F gasta cargas de rayo.\nBusca la llave si la salida esta cerrada y pisa el bloque verde para avanzar.";
     }
     if (currentLanguage == LANGUAGE_KO)
     {
-        if (officialRound == 1) return "공식 게임이 시작됩니다.\n라운드 1과 2에는 빨간 순찰 적과 분홍 사격 적이 나옵니다.\n체력 100, 탄약 15발로 시작하고 배터리는 이후 라운드에 대비합니다.\n초록 출구에 도착하면 다음 라운드로 갑니다.";
+        if (officialRound == 1) return "공식 게임이 시작됩니다.\n라운드 1과 2에는 빨간 순찰 적과 분홍 사격 적이 나옵니다.\n체력 100, 탄약 30발로 시작하고 배터리는 이후 라운드에 대비합니다.\n초록 출구에 도착하면 다음 라운드로 갑니다.";
         if (officialRound == 3) return "손전등 라운드가 시작됩니다.\n라운드 3과 4에는 빨간 적, 분홍 적, 제한된 시야가 있습니다.\n배터리는 매 라운드 충전되지 않으니 아껴 쓰세요.\n라운드 5부터 5라운드마다 충전됩니다.";
         if (officialRound == 5) return "라운드 5에서는 손전등 배터리가 100퍼센트로 충전됩니다.\n이번 라운드는 보라색 보스 하나에 집중합니다.\n계속 움직이고, 보스가 쏠 때 일직선을 피하고, 5번 맞혀 기절시키세요.";
         if (officialRound == 6) return "라운드 6과 7은 보스와 빨간 적이 함께 나옵니다.\n보스는 직접 추적하고 빨간 적은 주변 길을 압박합니다.\n총으로 공간을 만들고 막히지 않게 움직이세요.";
         if (officialRound == 8) return "라운드 8과 9에는 손전등 어둠을 제외한 모든 적이 나옵니다.\n빨간 적은 추격하고, 분홍 적은 쏘고, 보스는 멀면 빨라집니다.\n음악이 커지면 가까운 위험이 있다는 뜻입니다.";
-        if (officialRound == 10) return "라운드 10부터는 빨간 적, 분홍 적, 보스, 손전등이 모두 활성화됩니다.\n배터리는 10, 15, 20 라운드처럼 5라운드마다만 충전됩니다.\n손전등을 끄기 전에 이동 경로를 확인하세요.";
+        if (officialRound == 9) return "위험 타일이 활성화됩니다.\n빨간 표식은 한 번 피해를 주고 사라집니다.\nSHIFT로 지나가면 피해를 피할 수 있습니다.\nSHIFT는 라운드마다 3번만 사용할 수 있습니다.";
+        if (officialRound == 10) return "라운드 10부터는 보스, 손전등, LIGHTNING이 모두 활성화됩니다.\n15초마다 3초 동안 미로가 보입니다.\nSHOP: F 키 LIGHTNING +1.\nKEY, 출구, 보스 경로가 안 보일 때 사용하세요.";
         if (officialRound == 15) return "이제 난이도 상승이 시작됩니다.\n라운드가 올라갈수록 적이 더 빠르고 더 자주 길을 계산합니다.\n기절, 재장전 타이밍, 배터리 관리가 중요합니다.";
+        if (officialRound == 16) return "추가 규칙이 시작됩니다.\n일부 라운드는 시야, TAB, 함정, SHIFT, 보스를 바꿉니다.\n상태 패널에서 이 규칙을 확인하세요.\n각 규칙은 작은 도전 모드입니다.";
         return "미로를 지나 초록 출구에 도착하세요.\n스페이스로 발사, R로 재장전, 가능할 때 C로 손전등을 켭니다.\n계속 움직이고 기절 시간을 이용해 길을 여세요.";
     }
 
-    if (officialRound == 1) return "A partida oficial comeca agora.\nRounds 1 e 2 usam inimigos vermelhos de patrulha e rosas atiradores.\nVoce inicia com 100 de vida, 100 municoes totais e 15 na arma.\nChegue na saida verde para avancar.";
-    if (officialRound == 3) return "Comecam os rounds com lanterna.\nRounds 3 e 4 tem vermelhos, rosas e visao limitada.\nA bateria nao recarrega todo round; use com cuidado.\nEla volta no round 5 e depois a cada 5 rounds.";
+    if (officialRound == 1) return "A partida oficial comeca agora.\nWASD/setas movem; ESPACO atira; R recarrega; SHIFT da dash; TAB abre o mapa com bateria propria.\nVoce inicia com 100 de vida e 30 municoes na arma.\nPise no bloco verde para avancar.";
+    if (officialRound == 3) return "Comecam os rounds com lanterna.\nC liga/desliga a lanterna; ela revela mais longe, mas consome a propria bateria.\nTAB tambem tem bateria separada, entao use o mapa em consultas curtas.\nAs baterias voltam no round 5 e depois a cada 5 rounds.";
     if (officialRound == 4) return "Portas de seguranca foram ativadas.\nAche a chave dourada antes de abrir a saida.\nMoedas, municao, vida e bateria podem aparecer em rotas laterais.";
-    if (officialRound == 5) return "No round 5 a bateria da lanterna volta para 50 por cento.\nEste round foca apenas no chefao roxo.\nContinue se movendo, quebre o alinhamento quando ele atirar e acerte cinco tiros para nocautea-lo.";
+    if (officialRound == 5) return "No round 5 as baterias das ferramentas voltam para 100 por cento.\nEste round foca apenas no chefao roxo.\nContinue se movendo, quebre o alinhamento quando ele atirar e acerte cinco tiros para nocautea-lo.";
     if (officialRound == 6) return "Rounds 6 e 7 juntam chefao e inimigos vermelhos.\nO chefao persegue direto, enquanto os vermelhos pressionam rotas proximas.\nUse tiros para abrir espaco e evitar ficar preso.";
-    if (officialRound == 8) return "Rounds 8 e 9 trazem todos os tipos de inimigo, mas sem escuridao da lanterna.\nVermelhos perseguem, rosas atiram e o chefao acelera quando esta longe.\nObserve a musica: ela aumenta quando o perigo esta perto.";
-    if (officialRound == 10) return "Do round 10 em diante, tudo fica ativo: vermelho, rosa, chefao e lanterna.\nA bateria so recarrega nos rounds 10, 15, 20 e assim por diante.\nPlaneje o caminho antes de desligar a lanterna.";
-    if (officialRound == 15) return "A dificuldade crescente esta ativa.\nOs inimigos ficam mais rapidos e usam caminho inteligente com mais frequencia a cada round.\nNocaute, recarga e controle da bateria passam a ser essenciais.";
-    if (officialRound == 7) return "Reliquias de sobrecarga podem aparecer.\nElas dao moedas e uma carga extra de raio.\nRotas perigosas podem pagar seu proximo upgrade da loja.";
-    return "Atravesse o labirinto e alcance a saida verde.\nColete moedas, municao, vida e bateria quando aparecerem.\nMantenha movimento e use nocautes para abrir caminho.";
+    if (officialRound == 8) return "Rounds 8 e 9 trazem todos os tipos de inimigo, mas sem escuridao da lanterna.\nVermelhos perseguem, rosas atiram e o chefao acelera quando esta longe.\nContinue se movendo e quebre linhas retas antes dos tiros.";
+    if (officialRound == 9) return "Bombas-armadilha foram ativadas.\nElas piscam: 3 segundos armadas, 3 segundos seguras.\nPasse quando estiverem apagadas ou use SHIFT para atravessar.\nO dash tem apenas 3 cargas por round.";
+    if (officialRound == 10) return "Raio foi liberado.\nA cada 15 segundos o mapa inteiro aparece por 3 segundos.\nA loja vende cargas extras para usar com F.\nUse quando chave, saida ou rota do chefao estiverem incertas.";
+    if (officialRound == 15) return "O labirinto segue mudando daqui em diante.\nPosicao da saida, velocidade inimiga e caminho inteligente continuam escalando a cada round.\nNocaute, recarga e controle da bateria importam mais agora.";
+    if (officialRound == 16) return "Modificadores de round seguem rotacionando.\nAlguns rounds reduzem visao, bloqueiam TAB, adicionam armadilhas, reduzem dash ou pressionam o chefao.\nO painel de status mostra a lista ativa.\nCada modificador funciona como um pequeno modo desafio.";
+    if (officialRound == 7) return "Rotas laterais podem ter recompensas melhores.\nMoedas, municao, vida e bateria so ficam se voce vencer o round.\nSe morrer, tudo volta para antes do round.";
+    return "Round em andamento.\nWASD/setas movem, ESPACO atira, R recarrega e SHIFT da dash com cargas limitadas.\nTAB abre o mapa enquanto a bateria dele durar; C usa lanterna quando liberada; F aciona raio quando houver carga.\nPegue chave se a saida estiver trancada e pise no bloco verde para avancar.";
 }
 
 bool ShouldShowRoundInfo(void)
@@ -3273,9 +3768,7 @@ bool ShouldShowRoundInfo(void)
         return true;
     }
 
-    return officialRound == 1 || officialRound == 3 || officialRound == 4 || officialRound == 5 ||
-           officialRound == 6 || officialRound == 7 || officialRound == 8 || officialRound == 10 ||
-           officialRound == 15;
+    return true;
 }
 
 void StartCurrentStage(void)
@@ -3296,6 +3789,7 @@ void ResetOfficialRunStats(void)
     playerTotalAmmo = playerMaxAmmo;
     playerAmmo = PLAYER_MAGAZINE_SIZE;
     flashlightBattery = FLASHLIGHT_MAX_BATTERY;
+    mapBattery = MAP_MAX_BATTERY;
     lightningCharges = 0;
 }
 
@@ -3946,6 +4440,10 @@ void UpdateBossEnemy(void)
             Vector2 shotOrigin = GetCellCenter(bossCellX, bossCellY);
             shotOrigin.x += shotDirection.x * (bossEnemy.radius + BULLET_RADIUS + 3.0f);
             shotOrigin.y += shotDirection.y * (bossEnemy.radius + BULLET_RADIUS + 3.0f);
+            if (gameAudioLoaded)
+            {
+                PlaySound(bossAlertSound);
+            }
             SpawnBossBullet(shotOrigin, shotDirection);
             bossEnemy.shootPauseTimer = GetBossShootCooldown();
         }
@@ -3991,34 +4489,6 @@ bool IsEnemyDangerous(Enemy *enemy)
     return true;
 }
 
-float GetNearestDangerousEnemyDistance(void)
-{
-    float nearestDistance = MUSIC_NEAR_ENEMY_DISTANCE;
-
-    for (int i = 0; i < RED_ENEMY_COUNT; i++)
-    {
-        if (IsEnemyDangerous(&redEnemies[i]))
-        {
-            nearestDistance = fminf(nearestDistance, GetDistanceBetweenPoints(redEnemies[i].position, player.position));
-        }
-    }
-
-    for (int i = 0; i < BLUE_ENEMY_COUNT; i++)
-    {
-        if (IsEnemyDangerous(&blueEnemies[i]))
-        {
-            nearestDistance = fminf(nearestDistance, GetDistanceBetweenPoints(blueEnemies[i].position, player.position));
-        }
-    }
-
-    if (IsEnemyDangerous(&bossEnemy))
-    {
-        nearestDistance = fminf(nearestDistance, GetDistanceBetweenPoints(bossEnemy.position, player.position));
-    }
-
-    return nearestDistance;
-}
-
 Sound CreateSynthSound(int soundType)
 {
     float duration = 0.14f;
@@ -4028,6 +4498,9 @@ Sound CreateSynthSound(int soundType)
     if (soundType == 6) duration = 0.18f;
     if (soundType == 7) duration = 0.12f;
     if (soundType == 8) duration = 0.55f;
+    if (soundType == 9) duration = 0.20f;
+    if (soundType == 10) duration = 0.32f;
+    if (soundType == 11) duration = 0.16f;
 
     int sampleCount = (int)((float)AUDIO_SAMPLE_RATE * duration);
     int16_t *samples = (int16_t *)malloc((size_t)sampleCount * sizeof(int16_t));
@@ -4068,6 +4541,13 @@ Sound CreateSynthSound(int soundType)
             float shimmer = sinf(t * note * 6.2831853f) + (0.18f * sinf(t * note * 2.0f * 6.2831853f));
             value = shimmer * softEnvelope;
         }
+        else if (soundType == 5)
+        {
+            float fall = 190.0f - 125.0f * p;
+            float alarm = sinf(t * fall * 6.2831853f) + 0.28f * sinf(t * 47.0f * 6.2831853f);
+            float heavyEnvelope = fminf(1.0f, p * 8.0f) * (1.0f - p) * (1.0f - p);
+            value = alarm * heavyEnvelope;
+        }
         else if (soundType == 6)
         {
             float freq = 150.0f - (70.0f * p);
@@ -4086,6 +4566,23 @@ Sound CreateSynthSound(int soundType)
             float rumble = 0.45f * sinf(t * (95.0f - 35.0f * p) * 6.2831853f);
             float snapEnvelope = fminf(1.0f, p * 38.0f) * (1.0f - p);
             value = (crack + rumble) * snapEnvelope;
+        }
+        else if (soundType == 9)
+        {
+            float freq = 360.0f + 820.0f * p;
+            float sweep = sinf(t * freq * 6.2831853f);
+            value = sweep * envelope;
+        }
+        else if (soundType == 10)
+        {
+            float buzz = sinf(t * 75.0f * 6.2831853f) + 0.55f * sinf(t * 145.0f * 6.2831853f);
+            value = buzz * envelope;
+        }
+        else if (soundType == 11)
+        {
+            float beep = sinf(t * 1240.0f * 6.2831853f);
+            float gate = (fmodf(p * 6.0f, 1.0f) < 0.5f) ? 1.0f : 0.25f;
+            value = beep * envelope * gate;
         }
         else
         {
@@ -4110,6 +4607,14 @@ Sound CreateSynthSound(int soundType)
 
 void InitGameAudio(void)
 {
+#if defined(__linux__)
+    if (!DirectoryExists("/dev/snd"))
+    {
+        gameAudioLoaded = false;
+        return;
+    }
+#endif
+
     InitAudioDevice();
     if (!IsAudioDeviceReady())
     {
@@ -4125,6 +4630,9 @@ void InitGameAudio(void)
     playerHitSound = CreateSynthSound(6);
     flashlightToggleSound = CreateSynthSound(7);
     lightningSound = CreateSynthSound(8);
+    dashSound = CreateSynthSound(9);
+    trapSound = CreateSynthSound(10);
+    bossAlertSound = CreateSynthSound(11);
     victorySound = CreateSynthSound(4);
     gameOverSound = CreateSynthSound(5);
 
@@ -4134,6 +4642,9 @@ void InitGameAudio(void)
     SetSoundVolume(playerHitSound, 0.9f);
     SetSoundVolume(flashlightToggleSound, 0.72f);
     SetSoundVolume(lightningSound, 0.9f);
+    SetSoundVolume(dashSound, 0.78f);
+    SetSoundVolume(trapSound, 0.78f);
+    SetSoundVolume(bossAlertSound, 0.6f);
     SetSoundVolume(victorySound, VICTORY_VOLUME);
     SetSoundVolume(gameOverSound, GAME_OVER_VOLUME);
 
@@ -4161,6 +4672,9 @@ void ShutdownGameAudio(void)
     UnloadSound(playerHitSound);
     UnloadSound(flashlightToggleSound);
     UnloadSound(lightningSound);
+    UnloadSound(dashSound);
+    UnloadSound(trapSound);
+    UnloadSound(bossAlertSound);
     UnloadSound(victorySound);
     UnloadSound(gameOverSound);
     CloseAudioDevice();
@@ -4192,6 +4706,8 @@ bool DamagePlayer(int damage)
     {
         playerHealth = 0;
         playerAlive = false;
+        RestoreRoundStartSnapshot();
+        playerHealth = 0;
         if (gameAudioLoaded)
         {
             PlaySound(gameOverSound);
@@ -4282,6 +4798,9 @@ void ApplyEnemyTouchDamage(void)
         if (DamagePlayer(ENEMY_TOUCH_DAMAGE))
         {
             PushEnemyAwayFromPlayer(&bossEnemy);
+            bossEnemy.shootPauseTimer = fmaxf(bossEnemy.shootPauseTimer, 0.35f);
+            SpawnFloatingNotice(player.position, "CHEFAO EMPURRADO", (Color){ 255, 70, 170, 255 });
+            SpawnParticleBurst(bossEnemy.position, (Color){ 255, 70, 170, 255 }, 24, 115.0f, 3.0f);
             if (gameAudioLoaded && playerAlive)
             {
                 PlaySound(playerHitSound);
@@ -4304,6 +4823,7 @@ void UpdateBullets(void)
 
         if (IsPositionBlocked(bullets[i].position, bullets[i].radius))
         {
+            SpawnParticleBurst(bullets[i].position, bullets[i].fromPlayer ? GOLD : SKYBLUE, 8, 58.0f, 2.2f);
             bullets[i].active = false;
             continue;
         }
@@ -4320,6 +4840,7 @@ void UpdateBullets(void)
                     distance <= redEnemies[enemyIndex].radius + bullets[i].radius)
                 {
                     redEnemies[enemyIndex].hitsTaken++;
+                    SpawnParticleBurst(bullets[i].position, RED, 10, 70.0f, 2.5f);
                     bullets[i].active = false;
 
                     if (redEnemies[enemyIndex].hitsTaken >= RED_HIT_LIMIT)
@@ -4347,6 +4868,7 @@ void UpdateBullets(void)
                     distance <= blueEnemies[enemyIndex].radius + bullets[i].radius)
                 {
                     blueEnemies[enemyIndex].hitsTaken++;
+                    SpawnParticleBurst(bullets[i].position, (Color){ 255, 45, 165, 255 }, 10, 70.0f, 2.5f);
                     bullets[i].active = false;
 
                     if (blueEnemies[enemyIndex].hitsTaken >= BLUE_HIT_LIMIT)
@@ -4371,6 +4893,7 @@ void UpdateBullets(void)
             if (bossEnemy.active && bossEnemy.knockoutTimer <= 0.0f && distance <= bossEnemy.radius + bullets[i].radius)
             {
                 bossEnemy.hitsTaken++;
+                SpawnParticleBurst(bullets[i].position, VIOLET, 14, 90.0f, 3.0f);
                 bullets[i].active = false;
 
                 if (bossEnemy.hitsTaken >= BOSS_HIT_LIMIT)
@@ -4385,6 +4908,7 @@ void UpdateBullets(void)
         {
             if (CircleOverlapsTriangle(bullets[i].position, bullets[i].radius, GetPlayerTriangleHitbox(player.position)))
             {
+                SpawnParticleBurst(player.position, (Color){ 255, 70, 90, 255 }, 18, 90.0f, 3.0f);
                 bullets[i].active = false;
                 DamagePlayer(BLUE_BULLET_DAMAGE);
             }
@@ -4710,6 +5234,21 @@ void DrawHud(void)
         DrawKeyCap("R", controls.x + pad, controls.y + 50.0f * scale, 28.0f * scale, scale);
         DrawTextStrongFit(T(TEXT_HUD_RECARREGAR), (int)(controls.x + 48.0f * scale), (int)(controls.y + 53.0f * scale),
                           small, 7, 0.15f * scale, controls.width - 56.0f * scale, RAYWHITE, BLACK);
+        DrawKeyCap("TAB", controls.x + controls.width - 88.0f * scale, controls.y + 31.0f * scale, 38.0f * scale, scale);
+        if (!IsTacticalMapAvailable())
+        {
+            DrawLineEx((Vector2){ controls.x + controls.width - 86.0f * scale, controls.y + 33.0f * scale },
+                       (Vector2){ controls.x + controls.width - 52.0f * scale, controls.y + 58.0f * scale },
+                       2.0f * scale, (Color){ 255, 70, 90, 255 });
+        }
+        DrawTextStrongFit(TextFormat("D%d", playerDashCharges), (int)(controls.x + controls.width - 42.0f * scale), (int)(controls.y + 36.0f * scale),
+                          small, 7, 0.0f, 30.0f * scale, GOLD, BLACK);
+        float mapBatteryFraction = fmaxf(0.0f, fminf(1.0f, mapBattery / MAP_MAX_BATTERY));
+        DrawSegmentedBar(controls.x + controls.width - 88.0f * scale, controls.y + 62.0f * scale, 78.0f * scale, 6.0f * scale,
+                         10, (int)ceilf(mapBatteryFraction * 10.0f),
+                         (Color){ 120, 230, 255, 255 }, (Color){ 20, 42, 58, 255 }, scale);
+        DrawTextStrongFit(TextFormat("M%.0f%%", mapBatteryFraction * 100.0f), (int)(controls.x + controls.width - 88.0f * scale), (int)(controls.y + 68.0f * scale),
+                          ScaleFontSize(6.0f), 6, 0.0f, 78.0f * scale, RAYWHITE, BLACK);
 
         return;
     }
@@ -4739,6 +5278,11 @@ void DrawHud(void)
                       (int)(status.x + pad), (int)(status.y + 82.0f * scale),
                       large, 10, 0.5f * scale, contentWidth,
                       (Color){ 105, 180, 255, 255 }, BLACK);
+    if (!inTutorialSequence && officialRound >= MODIFIER_START_ROUND)
+    {
+        DrawTextStrongFit(GetModifierSummary(), (int)(status.x + pad), (int)(status.y + 112.0f * scale),
+                          small, 7, 0.0f, contentWidth, GOLD, BLACK);
+    }
 
     y += panelHeight + gap;
     Rectangle log = { leftX, y, panelWidth, 140.0f * scale };
@@ -4759,7 +5303,7 @@ void DrawHud(void)
 
     y += log.height + gap;
     float dataPanelHeight = 194.0f * scale;
-    float controlsPanelHeight = 300.0f * scale;
+    float controlsPanelHeight = 460.0f * scale;
 
     Rectangle vital = { leftX, y, panelWidth, dataPanelHeight };
     DrawTechPanel(vital, HUD_ACCENT_COLOR);
@@ -4822,36 +5366,71 @@ void DrawHud(void)
     DrawTextStrongSpaced(T(TEXT_HUD_RECARREGAR), (int)(controls.x + pad), (int)(controls.y + 112.0f * scale),
                    small, 0.3f * scale, (Color){ 150, 190, 240, 255 }, BLACK);
     DrawKeyCap("R", controls.x + pad, controls.y + 132.0f * scale, 44.0f * scale, scale);
+    DrawTextStrongSpaced("DASH / MAPA", (int)(controls.x + pad), (int)(controls.y + 164.0f * scale),
+                   small, 0.15f * scale, (Color){ 150, 190, 240, 255 }, BLACK);
+    DrawKeyCap("SHIFT", controls.x + pad, controls.y + 184.0f * scale, 66.0f * scale, scale);
+    DrawKeyCap("TAB", controls.x + pad + 76.0f * scale, controls.y + 184.0f * scale, 52.0f * scale, scale);
+    DrawTextStrongFit(TextFormat("%d/%d DASH", playerDashCharges, GetRoundDashMaxCharges()),
+                      (int)(controls.x + pad + 138.0f * scale), (int)(controls.y + 190.0f * scale),
+                      small, 7, 0.0f, rightContentWidth - 138.0f * scale, GOLD, BLACK);
+    float infoY = 222.0f * scale;
+    if (!IsTacticalMapAvailable())
+    {
+        DrawTextStrongFit("MAPA BLOQUEADO", (int)(controls.x + pad), (int)(controls.y + infoY),
+                          small, 7, 0.0f, rightContentWidth, (Color){ 255, 70, 90, 255 }, BLACK);
+        infoY += 18.0f * scale;
+    }
+    if (playerDashCooldown > 0.0f || playerDashCharges <= 0)
+    {
+        DrawTextStrongFit((playerDashCharges <= 0) ? "DASH ESGOTADO" : TextFormat("DASH %.1fs", playerDashCooldown), (int)(controls.x + pad), (int)(controls.y + infoY),
+                          small, 7, 0.0f, rightContentWidth, GOLD, BLACK);
+        infoY += 18.0f * scale;
+    }
+
+    if (IsLockedExitRound())
+    {
+        DrawTextStrongSpaced(hasExitKey ? "CHAVE: OK" : "ACHE A CHAVE",
+                             (int)(controls.x + pad), (int)(controls.y + infoY),
+                             small, 0.1f * scale, hasExitKey ? MAZE_EXIT_COLOR : GOLD, BLACK);
+        infoY += 28.0f * scale;
+    }
+
+    float mapY = infoY + 10.0f * scale;
+    float mapBatteryFraction = fmaxf(0.0f, fminf(1.0f, mapBattery / MAP_MAX_BATTERY));
+    DrawTextStrongSpaced("MAPA", (int)(controls.x + pad), (int)(controls.y + mapY),
+                         small, 0.3f * scale, HUD_ACCENT_COLOR, BLACK);
+    DrawTextStrongFit(TextFormat("%.0f%%", (mapBattery / MAP_MAX_BATTERY) * 100.0f),
+                      (int)(controls.x + rightWidth - pad - 54.0f * scale), (int)(controls.y + mapY),
+                      small, 6, 0.2f * scale, 54.0f * scale, RAYWHITE, BLACK);
+    DrawSegmentedBar(controls.x + pad, controls.y + mapY + 26.0f * scale, rightContentWidth, 8.0f * scale,
+                     10, (int)ceilf(mapBatteryFraction * 10.0f),
+                     (Color){ 120, 230, 255, 255 }, (Color){ 20, 42, 58, 255 }, scale);
 
     if (currentRoundConfig.flashlightEnabled)
     {
         float percentWidth = 54.0f * scale;
-        DrawTextStrongSpaced(T(TEXT_HUD_LANTERNA), (int)(controls.x + pad), (int)(controls.y + 164.0f * scale),
+        float flashlightY = mapY + 50.0f * scale;
+        DrawTextStrongSpaced(T(TEXT_HUD_LANTERNA), (int)(controls.x + pad), (int)(controls.y + flashlightY),
                    small, 0.3f * scale, HUD_ACCENT_COLOR, BLACK);
-        DrawKeyCap("C", controls.x + pad, controls.y + 184.0f * scale, 44.0f * scale, scale);
+        DrawKeyCap("C", controls.x + pad, controls.y + flashlightY + 20.0f * scale, 44.0f * scale, scale);
         float batteryFraction = fmaxf(0.0f, fminf(1.0f, flashlightBattery / FLASHLIGHT_MAX_BATTERY));
-        DrawTextStrongFit(TextFormat("%.0f%%", flashlightBattery), (int)(controls.x + rightWidth - pad - percentWidth), (int)(controls.y + 188.0f * scale),
+        DrawTextStrongFit(TextFormat("%.0f%%", (flashlightBattery / FLASHLIGHT_MAX_BATTERY) * 100.0f), (int)(controls.x + rightWidth - pad - percentWidth), (int)(controls.y + flashlightY + 24.0f * scale),
                        small, 6, 0.2f * scale, percentWidth, RAYWHITE, BLACK);
-        DrawSegmentedBar(controls.x + pad, controls.y + 220.0f * scale, rightContentWidth, 8.0f * scale,
+        DrawSegmentedBar(controls.x + pad, controls.y + flashlightY + 56.0f * scale, rightContentWidth, 8.0f * scale,
                          10, (int)ceilf(batteryFraction * 10.0f),
                          (Color){ 255, 205, 60, 255 }, (Color){ 60, 50, 20, 255 }, scale);
     }
 
     if (IsLightningAvailableThisRound())
     {
-        DrawTextStrongSpaced(T(TEXT_HUD_LIGHTNING), (int)(controls.x + pad), (int)(controls.y + 244.0f * scale),
+        float lightningY = currentRoundConfig.flashlightEnabled ? (mapY + 122.0f * scale) : (mapY + 44.0f * scale);
+        DrawTextStrongSpaced(T(TEXT_HUD_LIGHTNING), (int)(controls.x + pad), (int)(controls.y + lightningY),
                    small, 0.3f * scale, (Color){ 120, 230, 255, 255 }, BLACK);
-        DrawKeyCap("F", controls.x + pad, controls.y + 264.0f * scale, 44.0f * scale, scale);
-        DrawTextStrongFit(TextFormat("%d", lightningCharges), (int)(controls.x + 60.0f * scale), (int)(controls.y + 268.0f * scale),
-                       small, 6, 0.2f * scale, rightContentWidth - 60.0f * scale, RAYWHITE, BLACK);
+        DrawKeyCap("F", controls.x + pad, controls.y + lightningY + 20.0f * scale, 44.0f * scale, scale);
+        DrawTextStrongFit(TextFormat("%d", lightningCharges), (int)(controls.x + 72.0f * scale), (int)(controls.y + lightningY + 24.0f * scale),
+                       small, 6, 0.2f * scale, rightContentWidth - 72.0f * scale, RAYWHITE, BLACK);
     }
 
-    if (IsLockedExitRound())
-    {
-        DrawTextStrongSpaced(hasExitKey ? "CHAVE: OK" : "ACHE A CHAVE",
-                   (int)(controls.x + pad), (int)(controls.y + controls.height - 24.0f * scale),
-                   small, 0.1f * scale, hasExitKey ? MAZE_EXIT_COLOR : GOLD, BLACK);
-    }
 }
 
 void DrawGameOverOverlay(void)
@@ -4928,23 +5507,233 @@ void DrawGameOverOverlay(void)
 Rectangle GetVictoryNextButtonRect(Rectangle panel)
 {
     float scale = GetUIScale();
+    float gap = 16.0f * scale;
+    float buttonWidth = (panel.width - 88.0f * scale - gap) * 0.5f;
 
     return (Rectangle){
-        panel.x + 70.0f * scale,
-        panel.y + 188.0f * scale,
-        panel.width - 140.0f * scale,
+        panel.x + 44.0f * scale + buttonWidth + gap,
+        panel.y + panel.height - 78.0f * scale,
+        buttonWidth,
         58.0f * scale
     };
 }
 
+Rectangle GetVictoryRoundsButtonRect(Rectangle panel)
+{
+    float scale = GetUIScale();
+    float gap = 16.0f * scale;
+    float buttonWidth = (panel.width - 88.0f * scale - gap) * 0.5f;
+
+    return (Rectangle){
+        panel.x + 44.0f * scale,
+        panel.y + panel.height - 78.0f * scale,
+        buttonWidth,
+        58.0f * scale
+    };
+}
+
+Rectangle GetRoundHistoryPanelRect(void)
+{
+    float scale = GetUIScale();
+    float panelWidth = fminf((float)GetScreenWidth() - 48.0f * scale, 860.0f * scale);
+    float panelHeight = fminf((float)GetScreenHeight() - 80.0f * scale, 560.0f * scale);
+
+    return (Rectangle){
+        ((float)GetScreenWidth() - panelWidth) * 0.5f,
+        ((float)GetScreenHeight() - panelHeight) * 0.5f,
+        panelWidth,
+        panelHeight
+    };
+}
+
+int GetCompletedRoundCountForHistory(void)
+{
+    int completedRounds = (bestOfficialRound > 1) ? bestOfficialRound - 1 : 0;
+
+    if (inTutorialSequence)
+    {
+        return 0;
+    }
+
+    if (gamePhase == PHASE_PLAYING && waitingForVictorySound)
+    {
+        return (officialRound > completedRounds) ? officialRound : completedRounds;
+    }
+
+    return completedRounds;
+}
+
+int GetNextRoundForHistory(void)
+{
+    if (gamePhase == PHASE_PLAYING && waitingForVictorySound)
+    {
+        return officialRound + 1;
+    }
+
+    return officialRound;
+}
+
+void DrawRoundHistoryPanel(void)
+{
+    float scale = GetUIScale();
+    Rectangle panel = GetRoundHistoryPanelRect();
+    int completedRounds = GetCompletedRoundCountForHistory();
+    int nextRound = GetNextRoundForHistory();
+    int titleSize = ScaleFontSize(25.0f);
+    int smallSize = ScaleFontSize(10.0f);
+    int numberSize = ScaleFontSize(14.0f);
+    float pad = 28.0f * scale;
+    float headerBottom = panel.y + 156.0f * scale;
+    float footerTop = panel.y + panel.height - 82.0f * scale;
+    float gridGap = 8.0f * scale;
+    float gridHeight = fmaxf(44.0f * scale, footerTop - headerBottom - 12.0f * scale);
+    int maxRowsAtMinSize = (int)fmaxf(1.0f, floorf((gridHeight + gridGap) / (18.0f * scale + gridGap)));
+    int columns = IsCompactLayout() ? 5 : 8;
+    if (completedRounds > columns * maxRowsAtMinSize)
+    {
+        columns = (int)ceilf((float)completedRounds / (float)maxRowsAtMinSize);
+    }
+    if (columns < 1) columns = 1;
+    float cellWidth = (panel.width - pad * 2.0f - gridGap * (float)(columns - 1)) / (float)columns;
+    if (cellWidth < 22.0f * scale)
+    {
+        gridGap = 4.0f * scale;
+        cellWidth = (panel.width - pad * 2.0f - gridGap * (float)(columns - 1)) / (float)columns;
+    }
+    int rows = (completedRounds > 0) ? (int)ceilf((float)completedRounds / (float)columns) : 1;
+    float cellHeight = fminf(42.0f * scale, (gridHeight - gridGap * (float)(rows - 1)) / (float)rows);
+    cellHeight = fmaxf(18.0f * scale, cellHeight);
+
+    DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Fade(BLACK, 0.72f));
+    DrawRectangleRounded(panel, 0.08f, 12, (Color){ 6, 12, 36, 248 });
+    DrawRectangleRoundedLinesEx(panel, 0.08f, 12, 3.0f * scale, HUD_BORDER_COLOR);
+    DrawTextStrongFit("ROUNDS FEITOS", (int)(panel.x + pad), (int)(panel.y + 30.0f * scale),
+                      titleSize, ScaleFontSize(14.0f), 0.5f * scale, panel.width - pad * 2.0f, RAYWHITE, BLACK);
+    DrawTextStrongFit(TextFormat("CONCLUIDOS: %d    PROXIMO: %d", completedRounds, nextRound),
+                      (int)(panel.x + pad), (int)(panel.y + 78.0f * scale),
+                      ScaleFontSize(13.0f), ScaleFontSize(9.0f), 0.0f, panel.width - pad * 2.0f,
+                      (Color){ 120, 230, 255, 255 }, BLACK);
+    DrawTextStrongFit(TextFormat("RECORDE %d   NIVEL %d   MOEDAS %d   PROX MOD: %s",
+                                 bestOfficialRound, playerLevel, playerCoins,
+                                 (nextRound >= MODIFIER_START_ROUND) ? FormatModifierSummary(GetRoundModifiers(nextRound)) : "PADRAO"),
+                      (int)(panel.x + pad), (int)(panel.y + 108.0f * scale),
+                      ScaleFontSize(10.0f), ScaleFontSize(8.0f), 0.0f, panel.width - pad * 2.0f,
+                      GOLD, BLACK);
+    DrawRectangleRec((Rectangle){ panel.x + pad, panel.y + 138.0f * scale, panel.width - pad * 2.0f, 4.0f * scale }, MAGENTA);
+
+    for (int i = 0; i < completedRounds; i++)
+    {
+        int roundNumber = i + 1;
+        int row = i / columns;
+        int column = i % columns;
+        Rectangle card = {
+            panel.x + pad + (float)column * (cellWidth + gridGap),
+            headerBottom + (float)row * (cellHeight + gridGap),
+            cellWidth,
+            cellHeight
+        };
+        bool selected = roundNumber == officialRound;
+        Color cardFill = selected ? (Color){ 22, 62, 112, 255 } : (Color){ 8, 14, 34, 245 };
+        Color cardBorder = selected ? GOLD : Fade(HUD_BORDER_COLOR, 0.68f);
+        DrawRectangleRounded(card, 0.08f, 8, cardFill);
+        DrawRectangleRoundedLinesEx(card, 0.08f, 8, selected ? 2.0f * scale : 1.0f * scale, cardBorder);
+        DrawTextStrongFit(TextFormat("%02d", roundNumber), (int)(card.x + 8.0f * scale), (int)(card.y + 10.0f * scale),
+                          numberSize, 8, 0.0f, card.width - 16.0f * scale, RAYWHITE, BLACK);
+    }
+
+    if (completedRounds <= 0)
+    {
+        DrawTextStrongFit("Nenhum round oficial concluido ainda.", (int)(panel.x + pad), (int)(headerBottom + 12.0f * scale),
+                          smallSize, 8, 0.0f, panel.width - pad * 2.0f, LIGHTGRAY, BLACK);
+    }
+
+    Rectangle nextButton = GetVictoryNextButtonRect(panel);
+    Rectangle backButton = GetVictoryRoundsButtonRect(panel);
+    Vector2 mouse = GetMousePosition();
+    bool nextHover = CheckCollisionPointRec(mouse, nextButton);
+    bool backHover = CheckCollisionPointRec(mouse, backButton);
+
+    DrawRectangleRounded(backButton, 0.18f, 10, backHover ? (Color){ 28, 38, 78, 255 } : (Color){ 12, 18, 44, 255 });
+    DrawRectangleRoundedLinesEx(backButton, 0.18f, 10, 1.5f * scale, HUD_BORDER_COLOR);
+    DrawTextStrongFit("VOLTAR", (int)(backButton.x + 14.0f * scale), (int)(backButton.y + 14.0f * scale),
+                      smallSize, 8, 0.0f, backButton.width - 28.0f * scale, RAYWHITE, BLACK);
+
+    DrawRectangleRounded(nextButton, 0.18f, 10, nextHover ? (Color){ 120, 255, 190, 255 } : (Color){ 65, 230, 150, 255 });
+    DrawRectangleRoundedLinesEx(nextButton, 0.18f, 10, 1.5f * scale, RAYWHITE);
+    DrawTextStrongFit(T(TEXT_NEXT_ROUND), (int)(nextButton.x + 14.0f * scale), (int)(nextButton.y + 14.0f * scale),
+                      smallSize, 8, 0.0f, nextButton.width - 28.0f * scale, BLACK, Fade(WHITE, 0.2f));
+}
+
+int GetClickedHistoryRound(Vector2 mouse)
+{
+    float scale = GetUIScale();
+    Rectangle panel = GetRoundHistoryPanelRect();
+    int completedRounds = GetCompletedRoundCountForHistory();
+    float pad = 28.0f * scale;
+    float headerBottom = panel.y + 156.0f * scale;
+    float footerTop = panel.y + panel.height - 82.0f * scale;
+    float gridGap = 8.0f * scale;
+    float gridHeight = fmaxf(44.0f * scale, footerTop - headerBottom - 12.0f * scale);
+    int maxRowsAtMinSize = (int)fmaxf(1.0f, floorf((gridHeight + gridGap) / (18.0f * scale + gridGap)));
+    int columns = IsCompactLayout() ? 5 : 8;
+
+    if (completedRounds <= 0)
+    {
+        return 0;
+    }
+
+    if (completedRounds > columns * maxRowsAtMinSize)
+    {
+        columns = (int)ceilf((float)completedRounds / (float)maxRowsAtMinSize);
+    }
+    if (columns < 1) columns = 1;
+
+    float cellWidth = (panel.width - pad * 2.0f - gridGap * (float)(columns - 1)) / (float)columns;
+    if (cellWidth < 22.0f * scale)
+    {
+        gridGap = 4.0f * scale;
+        cellWidth = (panel.width - pad * 2.0f - gridGap * (float)(columns - 1)) / (float)columns;
+    }
+
+    int rows = (int)ceilf((float)completedRounds / (float)columns);
+    float cellHeight = fminf(42.0f * scale, (gridHeight - gridGap * (float)(rows - 1)) / (float)rows);
+    cellHeight = fmaxf(18.0f * scale, cellHeight);
+
+    for (int i = 0; i < completedRounds; i++)
+    {
+        int row = i / columns;
+        int column = i % columns;
+        Rectangle card = {
+            panel.x + pad + (float)column * (cellWidth + gridGap),
+            headerBottom + (float)row * (cellHeight + gridGap),
+            cellWidth,
+            cellHeight
+        };
+
+        if (CheckCollisionPointRec(mouse, card))
+        {
+            return i + 1;
+        }
+    }
+
+    return 0;
+}
+
 void DrawVictoryOverlay(void)
 {
+    if (victoryRoundsOpen)
+    {
+        DrawRoundHistoryPanel();
+        return;
+    }
+
     float scale = GetUIScale();
     int screenWidth = GetScreenWidth();
     int screenHeight = GetScreenHeight();
     int completedNumber = inTutorialSequence ? tutorialRound : officialRound;
     const char *title = TextFormat(T(TEXT_STAGE_COMPLETE), GetStageCompleteLabel(), completedNumber);
     const char *buttonText = T(TEXT_NEXT_ROUND);
+    const char *roundsText = "ROUNDS FEITOS";
     int titleFontSize = ScaleFontSize(33.0f);
     int buttonFontSize = ScaleFontSize(22.0f);
     float panelWidth = fminf((float)screenWidth - 40.0f * scale, 540.0f * scale);
@@ -4956,13 +5745,16 @@ void DrawVictoryOverlay(void)
         panelHeight
     };
     Rectangle button = GetVictoryNextButtonRect(panel);
+    Rectangle roundsButton = GetVictoryRoundsButtonRect(panel);
     Vector2 mousePosition = GetMousePosition();
     bool isButtonHovered = CheckCollisionPointRec(mousePosition, button);
+    bool isRoundsHovered = CheckCollisionPointRec(mousePosition, roundsButton);
     Color successColor = (Color){ 65, 230, 150, 255 };
     Color buttonColor = isButtonHovered ? (Color){ 120, 255, 190, 255 } : successColor;
 
     titleFontSize = FitFontSizeToWidth(title, titleFontSize, ScaleFontSize(18.0f), 0.8f * scale, panel.width - 48.0f * scale);
     buttonFontSize = FitFontSizeToWidth(buttonText, buttonFontSize, ScaleFontSize(13.0f), 0.7f * scale, button.width - 62.0f * scale);
+    int roundsFontSize = FitFontSizeToWidth(roundsText, ScaleFontSize(15.0f), ScaleFontSize(9.0f), 0.2f * scale, roundsButton.width - 24.0f * scale);
 
     int titleWidth = (int)MeasureTextStrongSpaced(title, titleFontSize, 0.8f * scale).x;
 
@@ -5000,6 +5792,16 @@ void DrawVictoryOverlay(void)
                           ScaleFontSize(10.0f), ScaleFontSize(8.0f), 0.0f, panel.width - 88.0f * scale, GOLD, BLACK);
     }
 
+    DrawRectangleRounded(roundsButton, 0.24f, 10, isRoundsHovered ? (Color){ 28, 38, 78, 255 } : (Color){ 12, 18, 44, 255 });
+    DrawRectangleRoundedLinesEx(roundsButton, 0.24f, 10, 1.5f * scale, HUD_BORDER_COLOR);
+    DrawTextStrongSpaced(roundsText,
+                         (int)(roundsButton.x + 12.0f * scale),
+                         (int)(roundsButton.y + (roundsButton.height - (float)roundsFontSize) * 0.45f),
+                         roundsFontSize,
+                         0.2f * scale,
+                         RAYWHITE,
+                         BLACK);
+
     DrawRectangleRounded((Rectangle){ button.x - 2.0f * scale, button.y - 2.0f * scale, button.width + 4.0f * scale, button.height + 4.0f * scale }, 0.32f, 12, Fade(buttonColor, isButtonHovered ? 0.42f : 0.24f));
     DrawRectangleRounded(button, 0.3f, 12, buttonColor);
     DrawRectangleRoundedLinesEx(button, 0.3f, 12, 1.5f * scale, RAYWHITE);
@@ -5030,6 +5832,26 @@ bool HandleVictoryButton(void)
         panelHeight
     };
 
+    if (victoryRoundsOpen)
+    {
+        panel = GetRoundHistoryPanelRect();
+        int selectedRound = GetClickedHistoryRound(GetMousePosition());
+        if (selectedRound > 0)
+        {
+            officialRound = selectedRound;
+            victoryRoundsOpen = false;
+            waitingForVictorySound = false;
+            StartCurrentStage();
+            return true;
+        }
+
+        if (CheckCollisionPointRec(GetMousePosition(), GetVictoryRoundsButtonRect(panel)))
+        {
+            victoryRoundsOpen = false;
+            return true;
+        }
+    }
+
     if (CheckCollisionPointRec(GetMousePosition(), GetVictoryNextButtonRect(panel)))
     {
         if (gameAudioLoaded && IsSoundPlaying(victorySound))
@@ -5038,6 +5860,12 @@ bool HandleVictoryButton(void)
         }
 
         AdvanceToNextStage();
+        return true;
+    }
+
+    if (!victoryRoundsOpen && CheckCollisionPointRec(GetMousePosition(), GetVictoryRoundsButtonRect(panel)))
+    {
+        victoryRoundsOpen = true;
         return true;
     }
 
@@ -5077,6 +5905,12 @@ void DrawPlayer(void)
         float blink = (sinf((float)GetTime() * 9.0f) + 1.0f) * 0.5f;
         DrawCircleV(center, drawRadius * (3.0f + blink * 0.6f), Fade(playerGlow, 0.18f + blink * 0.14f));
         DrawCircleLines((int)center.x, (int)center.y, drawRadius * (2.15f + blink * 0.35f), Fade(playerGlow, 0.75f + blink * 0.25f));
+    }
+
+    if (playerDashTimer > 0.0f || playerDamageCooldown > 0.0f)
+    {
+        float pulse = 0.45f + 0.35f * sinf((float)GetTime() * 14.0f);
+        DrawCircleV(center, drawRadius * 2.25f, Fade(playerGlow, pulse));
     }
 
     DrawTriangle(shadowTip, shadowRight, shadowLeft, Fade(BLACK, 0.55f));
@@ -5185,6 +6019,16 @@ void DrawEnemies(void)
         }
 
         DrawCircleV(bossCenter, bossRadius * 2.5f, bossAura);
+        Vector2 warningDirection = { 0 };
+        if (bossEnemy.knockoutTimer <= 0.0f && IsEnemyAlignedWithPlayer(&bossEnemy, &warningDirection))
+        {
+            Vector2 warningEnd = {
+                bossCenter.x + warningDirection.x * TILE_SIZE * layout.scale.x * 3.0f,
+                bossCenter.y + warningDirection.y * TILE_SIZE * layout.scale.y * 3.0f
+            };
+            float pulse = 0.35f + 0.35f * sinf((float)GetTime() * 9.0f);
+            DrawLineEx(bossCenter, warningEnd, fmaxf(2.0f, 3.0f * scale), Fade(SKYBLUE, pulse));
+        }
         DrawRectangleV(bossPos, bossSize, bossBody);
         DrawRectangleLinesEx((Rectangle){ bossPos.x, bossPos.y, bossSize.x, bossSize.y }, 2.0f, RAYWHITE);
     }
@@ -5217,6 +6061,23 @@ void DrawBullets(void)
     }
 }
 
+void DrawParticles(void)
+{
+    MazeLayout layout = GetMazeLayout();
+
+    for (int i = 0; i < MAX_PARTICLES; i++)
+    {
+        if (particles[i].timer <= 0.0f)
+        {
+            continue;
+        }
+
+        float alpha = particles[i].timer / particles[i].maxTimer;
+        Vector2 center = WorldToScreenPositionLayout(particles[i].position, layout);
+        DrawCircleV(center, fmaxf(1.4f, particles[i].radius * layout.drawScale), Fade(particles[i].color, alpha));
+    }
+}
+
 void DrawVisibilityEffects(void)
 {
     if (lightningRevealTimer > 0.0f)
@@ -5233,15 +6094,79 @@ void DrawVisibilityEffects(void)
     MazeLayout layout = GetMazeLayout();
     float scale = layout.drawScale;
     Vector2 playerCenter = WorldToScreenPositionLayout(player.position, layout);
-    float playerAuraRadius = TILE_SIZE * scale * 2.9f;
+    float playerAuraRadius = TILE_SIZE * scale * 2.9f * GetDarknessVisionScale();
 
     DrawCircleV(playerCenter, playerAuraRadius, Fade(GOLD, 0.07f));
 
     if (currentRoundConfig.flashlightEnabled && flashlightOn)
     {
         Vector2 flashlightCenter = WorldToScreenPositionLayout(GetFlashlightCenter(), layout);
-        DrawCircleV(flashlightCenter, TILE_SIZE * scale * 4.8f, Fade((Color){ 255, 245, 180, 255 }, 0.13f));
+        DrawCircleV(flashlightCenter, TILE_SIZE * scale * 4.8f * GetDarknessVisionScale(), Fade((Color){ 255, 245, 180, 255 }, 0.13f));
     }
+}
+
+void DrawTacticalMapOverlay(void)
+{
+    if (!tacticalMapOpen)
+    {
+        return;
+    }
+
+    if (!IsTacticalMapAvailable())
+    {
+        return;
+    }
+
+    float scale = GetUIScale();
+    float rightWidth = GetHudRightPanelWidth();
+    float rightX = (float)GetScreenWidth() - rightWidth - (10.0f * scale);
+    Rectangle panel = {
+        rightX,
+        IsCompactLayout() ? ((float)GetScreenHeight() - 150.0f * scale) : (296.0f * scale),
+        rightWidth,
+        IsCompactLayout() ? (140.0f * scale) : fmaxf(180.0f * scale, fminf(470.0f * scale, (float)GetScreenHeight() - 306.0f * scale))
+    };
+    float cell = fminf((panel.width - 18.0f * scale) / (float)GRID_WIDTH,
+                       (panel.height - 42.0f * scale) / (float)GRID_HEIGTH);
+    cell = fmaxf(2.6f, cell);
+
+    if (panel.y + panel.height > (float)GetScreenHeight() - 10.0f * scale)
+    {
+        panel.y = (float)GetScreenHeight() - panel.height - 10.0f * scale;
+    }
+
+    DrawRectangleRounded(panel, 0.06f, 8, (Color){ 3, 8, 24, 232 });
+    DrawRectangleRoundedLinesEx(panel, 0.06f, 8, 1.5f * scale, Fade(HUD_BORDER_COLOR, 0.85f));
+    DrawTextStrongFit("MAPA TAB", (int)(panel.x + 8.0f * scale), (int)(panel.y + 8.0f * scale),
+                      ScaleFontSize(9.0f), 7, 0.0f, panel.width * 0.45f, HUD_BORDER_COLOR, BLACK);
+    float mapBatteryFraction = fmaxf(0.0f, fminf(1.0f, mapBattery / MAP_MAX_BATTERY));
+    DrawTextStrongFit(TextFormat("BAT %.0f%%", mapBatteryFraction * 100.0f),
+                      (int)(panel.x + panel.width - 76.0f * scale), (int)(panel.y + 8.0f * scale),
+                      ScaleFontSize(8.0f), 7, 0.0f, 68.0f * scale, RAYWHITE, BLACK);
+    DrawSegmentedBar(panel.x + panel.width * 0.48f, panel.y + 25.0f * scale, panel.width * 0.44f, 5.0f * scale,
+                     10, (int)ceilf(mapBatteryFraction * 10.0f),
+                     (Color){ 120, 230, 255, 255 }, (Color){ 20, 42, 58, 255 }, scale);
+
+    float mapWidth = GRID_WIDTH * cell;
+    float mapHeight = GRID_HEIGTH * cell;
+    Vector2 origin = { panel.x + (panel.width - mapWidth) * 0.5f, panel.y + 31.0f * scale + (panel.height - 42.0f * scale - mapHeight) * 0.5f };
+    for (int y = 0; y < GRID_HEIGTH; y++)
+    {
+        for (int x = 0; x < GRID_WIDTH; x++)
+        {
+            Color color = (grid[y][x] == CELL_WALL) ? (Color){ 20, 24, 42, 255 } : Fade(MAZE_PATH_COLOR, 0.74f);
+            if (grid[y][x] == CELL_EXIT) color = MAZE_EXIT_COLOR;
+            if (grid[y][x] == CELL_LOCKED_EXIT) color = GOLD;
+            if (grid[y][x] == CELL_KEY) color = GOLD;
+            if (grid[y][x] == CELL_TRAP) color = (Color){ 255, 70, 90, 255 };
+            DrawRectangleV((Vector2){ origin.x + (float)x * cell, origin.y + (float)y * cell },
+                           (Vector2){ cell - 0.5f, cell - 0.5f }, color);
+        }
+    }
+
+    int px = (int)(player.position.x / TILE_SIZE);
+    int py = (int)(player.position.y / TILE_SIZE);
+    DrawCircleV((Vector2){ origin.x + ((float)px + 0.5f) * cell, origin.y + ((float)py + 0.5f) * cell }, cell * 1.1f, GOLD);
 }
 
 void WrapTextToWidth(const char *source, int fontSize, float spacing, float maxWidth, char *destination, int destinationSize)
@@ -5438,10 +6363,10 @@ Rectangle GetContinueButtonRect(Rectangle panel)
     };
 }
 
-Rectangle GetOfficialRoundBackButtonRect(Rectangle panel)
+Rectangle GetOfficialRoundHistoryButtonRect(Rectangle panel)
 {
     float scale = GetUIScale();
-    float buttonWidth = fmaxf(260.0f * scale, MeasureTextStrongSpaced("Round anterior", ScaleFontSize(17.0f), 1.0f * scale).x + (54.0f * scale));
+    float buttonWidth = fmaxf(260.0f * scale, MeasureTextStrongSpaced("ROUNDS FEITOS", ScaleFontSize(17.0f), 1.0f * scale).x + (54.0f * scale));
     float continueWidth = fmaxf(260.0f * scale, MeasureTextStrongSpaced(T(TEXT_CONTINUE_TUTORIAL), ScaleFontSize(18.0f), 1.0f * scale).x + (82.0f * scale));
     float gap = 18.0f * scale;
     float totalWidth = buttonWidth + gap + continueWidth;
@@ -5466,17 +6391,17 @@ void DrawButtonArrow(Rectangle button, Color color)
     DrawTriangle(end, top, bottom, color);
 }
 
-void DrawRoundBackButton(Rectangle button)
+void DrawRoundHistoryButton(Rectangle button)
 {
     float scale = GetUIScale();
     Vector2 mousePosition = GetMousePosition();
     bool hovered = CheckCollisionPointRec(mousePosition, button);
     Color fill = hovered ? (Color){ 55, 72, 155, 255 } : (Color){ 17, 30, 78, 255 };
-    int fontSize = FitFontSizeToWidth("Round anterior", ScaleFontSize(17.0f), ScaleFontSize(10.0f), 0.7f * scale, button.width - 40.0f * scale);
+    int fontSize = FitFontSizeToWidth("ROUNDS FEITOS", ScaleFontSize(17.0f), ScaleFontSize(10.0f), 0.7f * scale, button.width - 40.0f * scale);
 
     DrawRectangleRounded(button, 0.28f, 10, fill);
     DrawRectangleRoundedLinesEx(button, 0.28f, 10, 2.0f, HUD_BORDER_COLOR);
-    DrawTextStrongSpaced("Round anterior", (int)(button.x + 20.0f * scale), (int)(button.y + (button.height - fontSize) * 0.45f), fontSize, 0.7f * scale, RAYWHITE, BLACK);
+    DrawTextStrongSpaced("ROUNDS FEITOS", (int)(button.x + 20.0f * scale), (int)(button.y + (button.height - fontSize) * 0.45f), fontSize, 0.7f * scale, RAYWHITE, BLACK);
 }
 
 void DrawContinueButton(Rectangle continueButton)
@@ -5501,9 +6426,9 @@ void DrawPanelButtons(Rectangle panel)
     {
         if (officialRound > 1)
         {
-            Rectangle backButton = GetOfficialRoundBackButtonRect(panel);
-            continueButton.x = backButton.x + backButton.width + (18.0f * GetUIScale());
-            DrawRoundBackButton(backButton);
+            Rectangle historyButton = GetOfficialRoundHistoryButtonRect(panel);
+            continueButton.x = historyButton.x + historyButton.width + (18.0f * GetUIScale());
+            DrawRoundHistoryButton(historyButton);
         }
 
         DrawContinueButton(continueButton);
@@ -5525,6 +6450,12 @@ void DrawPanelButtons(Rectangle panel)
 
 void DrawRoundPanel(const char *title, const char *body, const char *footer)
 {
+    if (victoryRoundsOpen && !inTutorialSequence)
+    {
+        DrawRoundHistoryPanel();
+        return;
+    }
+
     /* Body text uses extra letter spacing for legibility, and the panel
      * height grows to fit however many lines the explanation needs, so
      * longer tutorial text never gets clipped or cramped. */
@@ -5572,7 +6503,37 @@ bool HandlePanelButtons(void)
     Rectangle panel = GetRoundPanelRect((gamePhase == PHASE_INTRO) ? GetIntroTitle() : GetRoundInfoTitle(), body, footer);
     Rectangle skipButton = GetTutorialSkipButtonRect(panel);
     Rectangle continueButton = GetContinueButtonRect(panel);
+    Rectangle historyButton = GetOfficialRoundHistoryButtonRect(panel);
     Vector2 mousePosition = GetMousePosition();
+
+    if (victoryRoundsOpen && !inTutorialSequence)
+    {
+        Rectangle historyPanel = GetRoundHistoryPanelRect();
+        int selectedRound = GetClickedHistoryRound(mousePosition);
+
+        if (selectedRound > 0)
+        {
+            officialRound = selectedRound;
+            victoryRoundsOpen = false;
+            StartCurrentStage();
+            return true;
+        }
+
+        if (CheckCollisionPointRec(mousePosition, GetVictoryRoundsButtonRect(historyPanel)))
+        {
+            victoryRoundsOpen = false;
+            return true;
+        }
+
+        if (CheckCollisionPointRec(mousePosition, GetVictoryNextButtonRect(historyPanel)))
+        {
+            victoryRoundsOpen = false;
+            gamePhase = PHASE_PLAYING;
+            return true;
+        }
+
+        return false;
+    }
 
     if (inTutorialSequence && CheckCollisionPointRec(mousePosition, skipButton))
     {
@@ -5584,6 +6545,17 @@ bool HandlePanelButtons(void)
         SaveProgress();
         StartCurrentStage();
         return true;
+    }
+
+    if (!inTutorialSequence && officialRound > 1)
+    {
+        continueButton.x = historyButton.x + historyButton.width + (18.0f * GetUIScale());
+
+        if (CheckCollisionPointRec(mousePosition, historyButton))
+        {
+            victoryRoundsOpen = true;
+            return true;
+        }
     }
 
     if (CheckCollisionPointRec(mousePosition, continueButton))
@@ -5599,14 +6571,6 @@ bool HandlePanelButtons(void)
             gamePhase = PHASE_PLAYING;
         }
 
-        return true;
-    }
-
-    if (!inTutorialSequence && officialRound > 1 && CheckCollisionPointRec(mousePosition, GetOfficialRoundBackButtonRect(panel)))
-    {
-        officialRound--;
-        SaveProgress();
-        StartCurrentStage();
         return true;
     }
 
@@ -5703,7 +6667,7 @@ Rectangle GetShopButtonRect(int index)
 
 bool IsShopBatteryAvailable(void)
 {
-    return GetOfficialRoundConfig(officialRound).flashlightEnabled;
+    return !inTutorialSequence;
 }
 
 const char *GetShopBuyLabel(void)
@@ -5717,32 +6681,32 @@ const char *GetShopItemDescription(int index)
 {
     if (currentLanguage == LANGUAGE_EN)
     {
-        if (index == 0) return "Buy +50 ammo";
+        if (index == 0) return "Buy +30 ammo";
         if (index == 1) return "Max health +5";
         if (index == 2) return "Reveal map for 3s";
-        return "Battery to 50%";
+        return "Tool batteries to 100%";
     }
 
     if (currentLanguage == LANGUAGE_ES)
     {
-        if (index == 0) return "Compra +50 municion";
+        if (index == 0) return "Compra +30 municion";
         if (index == 1) return "Vida max +5";
         if (index == 2) return "Revela mapa 3s";
-        return "Bateria al 50%";
+        return "Baterias al 100%";
     }
 
     if (currentLanguage == LANGUAGE_KO)
     {
-        if (index == 0) return "최대 탄약이 15 증가합니다";
-        if (index == 1) return "최대 체력이 5 증가합니다";
-        if (index == 2) return "3초 동안 전체 지도를 밝힙니다";
-        return "손전등 배터리를 100퍼센트로 회복합니다";
+        if (index == 0) return "최대 탄약 +30";
+        if (index == 1) return "최대 체력 +5";
+        if (index == 2) return "3초 동안 지도를 밝게 합니다";
+        return "도구 배터리 100%";
     }
 
-    if (index == 0) return "Compra +50 municao";
+    if (index == 0) return "Compra +30 municao";
     if (index == 1) return "Vida max +5";
     if (index == 2) return "Revela mapa 3s";
-    return "Bateria para 50%";
+    return "Baterias para 100%";
 }
 
 void DrawShopItemIcon(int index, Vector2 center, float radius, Color accent)
@@ -5871,7 +6835,7 @@ void DrawShopPanel(void)
     int coinsSize = ScaleShopFontSize(11.0f);
     bool batteryAvailable = IsShopBatteryAvailable();
     bool healthCanGrow = playerMaxHealth < PLAYER_MAX_HEALTH;
-    bool ammoCanGrow = true;
+    bool ammoCanGrow = playerTotalAmmo < PLAYER_AMMO_CAP;
 
     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Fade(BLACK, 0.78f));
     DrawRectangleRounded(panel, 0.08f, 12, (Color){ 6, 12, 36, 245 });
@@ -5890,6 +6854,11 @@ void DrawShopPanel(void)
                       (int)(panel.x + 250.0f * scale), (int)(panel.y + 116.0f * scale),
                       ScaleShopFontSize(10.0f), ScaleShopFontSize(8.0f), 0.0f,
                       panel.width - 460.0f * scale, (Color){ 120, 230, 255, 255 }, BLACK);
+    DrawTextStrongFit(TextFormat("PROX ROUND %d  RECORDE %d  MOD %s", officialRound, bestOfficialRound,
+                                 (officialRound >= MODIFIER_START_ROUND) ? FormatModifierSummary(GetRoundModifiers(officialRound)) : "PADRAO"),
+                      (int)(panel.x + 250.0f * scale), (int)(panel.y + 132.0f * scale),
+                      ScaleShopFontSize(9.0f), ScaleShopFontSize(7.0f), 0.0f,
+                      panel.width - 460.0f * scale, GOLD, BLACK);
 
     DrawRectangleRounded(coinPill, 0.2f, 8, (Color){ 35, 30, 0, 255 });
     DrawRectangleRoundedLinesEx(coinPill, 0.2f, 8, 1.5f * scale, GOLD);
@@ -5934,11 +6903,12 @@ bool HandleShopButtons(void)
         return true;
     }
 
-    if (CheckCollisionPointRec(mousePosition, GetShopButtonRect(0)) && playerCoins >= SHOP_STANDARD_PRICE)
+    if (CheckCollisionPointRec(mousePosition, GetShopButtonRect(0)) && playerTotalAmmo < PLAYER_AMMO_CAP && playerCoins >= SHOP_STANDARD_PRICE)
     {
         playerCoins -= SHOP_STANDARD_PRICE;
         playerMaxAmmo += SHOP_AMMO_GAIN;
         playerTotalAmmo += SHOP_AMMO_GAIN;
+        ClampProgressState();
         SaveProgress();
         return true;
     }
@@ -5968,6 +6938,7 @@ bool HandleShopButtons(void)
     {
         playerCoins -= SHOP_STANDARD_PRICE;
         flashlightBattery = FLASHLIGHT_MAX_BATTERY;
+        mapBattery = MAP_MAX_BATTERY;
         SaveProgress();
         return true;
     }
@@ -6038,8 +7009,10 @@ int main(int argc, char *argv[])
                     }
 
                     UpdatePlayer();
+                    UpdateTacticalMapBattery();
                     CollectCurrentCellPickup();
                     UpdateFloatingNotices();
+                    UpdateParticles();
                     UpdatePlayerShooting();
                     UpdatePlayerReload();
                     UpdateFlashlight();
@@ -6056,9 +7029,10 @@ int main(int argc, char *argv[])
                     UpdateBullets();
                     ApplyEnemyTouchDamage();
 
-                    if (DidPlayerReachExit())
+                    if (playerAlive && DidPlayerReachExit())
                     {
                         FinishRoundRewards();
+                        SpawnParticleBurst(player.position, MAZE_EXIT_COLOR, 46, 150.0f, 3.5f);
                         if (gameAudioLoaded)
                         {
                             PlaySound(victorySound);
@@ -6082,7 +7056,9 @@ int main(int argc, char *argv[])
             DrawPlayer();
             DrawEnemies();
             DrawBullets();
+            DrawParticles();
             DrawHud();
+            DrawTacticalMapOverlay();
         }
 
         if (gamePhase == PHASE_PLAYING && !playerAlive)
