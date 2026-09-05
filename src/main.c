@@ -36,10 +36,11 @@
 #define MAX_BULLETS 48
 #define FLASHLIGHT_MAX_BATTERY 100.0f
 #define FLASHLIGHT_DRAIN_INTERVAL 1.0f
-#define FLASHLIGHT_DRAIN_AMOUNT 1.8f
+#define FLASHLIGHT_DRAIN_AMOUNT 1.0f
 #define FLASHLIGHT_TOGGLE_COST 1.0f
 #define MAP_MAX_BATTERY 100.0f
-#define MAP_DRAIN_AMOUNT 2.5f
+#define MAP_DRAIN_AMOUNT 1.0f
+#define MAP_TOGGLE_COST 1.0f
 #define PLAYER_BULLET_SPEED 220.0f
 #define BLUE_BULLET_SPEED 140.0f
 #define BOSS_BULLET_SPEED 118.0f
@@ -49,9 +50,10 @@
 #define ENEMY_KNOCKOUT_TIME 5.0f
 #define BOSS_HIT_LIMIT 5
 #define PLAYER_MAX_HEALTH 100
-#define PLAYER_MAGAZINE_SIZE 30
-#define PLAYER_MAX_AMMO 30
-#define PLAYER_AMMO_CAP 100
+#define PLAYER_MAGAZINE_SIZE 15
+#define PLAYER_START_AMMO 30
+#define PLAYER_MAX_AMMO 100
+#define PLAYER_AMMO_CAP PLAYER_MAX_AMMO
 #define SHOP_AMMO_GAIN 30
 #define PLAYER_RELOAD_TIME 1.5f
 #define BLUE_BULLET_DAMAGE 15
@@ -70,6 +72,7 @@
 #define SHOP_STANDARD_PRICE 100
 #define SHOP_LIGHTNING_PRICE 400
 #define SHOP_HEALTH_GAIN 5
+#define SHOP_BATTERY_GAIN 50.0f
 #define PICKUP_COIN_VALUE 25
 #define PICKUP_AMMO_VALUE 10
 #define PICKUP_BATTERY_VALUE 15.0f
@@ -145,7 +148,7 @@ int playerMaxHealth = PLAYER_START_HEALTH;
 int playerHealth = PLAYER_START_HEALTH;
 int playerMaxAmmo = PLAYER_MAX_AMMO;
 int playerAmmo = PLAYER_MAGAZINE_SIZE;
-int playerTotalAmmo = PLAYER_MAX_AMMO;
+int playerTotalAmmo = PLAYER_START_AMMO;
 float playerReloadTimer = 0.0f;
 float playerDamageCooldown = 0.0f;
 int playerCoins = SHOP_START_COINS;
@@ -169,7 +172,7 @@ int roundStartCoins = SHOP_START_COINS;
 int roundStartLevel = 1;
 int roundStartXp = 0;
 int roundStartMaxAmmo = PLAYER_MAX_AMMO;
-int roundStartTotalAmmo = PLAYER_MAX_AMMO;
+int roundStartTotalAmmo = PLAYER_START_AMMO;
 int roundStartAmmo = PLAYER_MAGAZINE_SIZE;
 float roundStartBattery = FLASHLIGHT_MAX_BATTERY;
 float roundStartMapBattery = MAP_MAX_BATTERY;
@@ -1043,7 +1046,6 @@ void AddEvolutionXp(int amount)
             playerHealth = playerMaxHealth;
         }
 
-        playerMaxAmmo += EVOLUTION_AMMO_GAIN;
         playerTotalAmmo += EVOLUTION_AMMO_GAIN;
         ClampProgressState();
         SpawnFloatingNotice(player.position, TextFormat("NIVEL %d", playerLevel), GOLD);
@@ -1132,7 +1134,7 @@ void LoadProgress(void)
     int savedXp = 0;
     int savedMaxHealth = PLAYER_START_HEALTH;
     int savedMaxAmmo = PLAYER_MAX_AMMO;
-    int savedTotalAmmo = PLAYER_MAX_AMMO;
+    int savedTotalAmmo = PLAYER_START_AMMO;
     float savedBattery = FLASHLIGHT_MAX_BATTERY;
     int savedLightning = 0;
     FILE *file = fopen(SAVE_FILE_NAME, "r");
@@ -1177,7 +1179,7 @@ void LoadProgress(void)
     lightningCharges = savedLightning;
     ClampProgressState();
     roundNeedsSetup = true;
-    gamePhase = PHASE_SHOP;
+    gamePhase = PHASE_INTRO;
 }
 
 const char *uiText[LANGUAGE_COUNT][TEXT_COUNT] = {
@@ -1381,7 +1383,7 @@ const char *uiText[LANGUAGE_COUNT][TEXT_COUNT] = {
         [TEXT_SHOP_TITLE] = "SHOP",
         [TEXT_SHOP_COINS] = "코인: %d",
         [TEXT_SHOP_BUY_AMMO] = "탄약",
-        [TEXT_SHOP_BUY_BATTERY] = "배터리 100%",
+        [TEXT_SHOP_BUY_BATTERY] = "배터리 +50%",
         [TEXT_SHOP_BUY_HEALTH] = "최대 체력 +5",
         [TEXT_SHOP_BUY_LIGHTNING] = "LIGHTNING +1",
         [TEXT_SHOP_START] = "라운드 시작",
@@ -2768,6 +2770,11 @@ void UpdatePlayer(void)
             }
             else if (mapBattery > 0.0f)
             {
+                mapBattery -= MAP_TOGGLE_COST;
+                if (mapBattery < 0.0f)
+                {
+                    mapBattery = 0.0f;
+                }
                 tacticalMapOpen = true;
             }
             else
@@ -3565,7 +3572,7 @@ void ApplyRoundConfig(void)
 
     if (inTutorialSequence)
     {
-        playerTotalAmmo = playerMaxAmmo;
+        playerTotalAmmo = PLAYER_START_AMMO;
         playerAmmo = PLAYER_MAGAZINE_SIZE;
         flashlightBattery = FLASHLIGHT_MAX_BATTERY;
         mapBattery = MAP_MAX_BATTERY;
@@ -3678,34 +3685,34 @@ const char *GetRoundInfoBody(void)
         if (currentLanguage == LANGUAGE_EN)
         {
             if (tutorialRound == 1) return "Movement, dash and map.\nWASD/arrows move. SHIFT dashes in your facing direction, with limited charges per round.\nTAB opens the tactical map while its battery lasts; close it to save charge.\nReach the green exit tile to advance.";
-            if (tutorialRound == 2) return "Shooting and reload.\nSPACE fires toward the triangle tip. Each shot spends one bullet from the 30-shot magazine.\nR reloads when you have reserve ammo. Five hits knock any enemy out for 5 seconds.\nPink enemies shoot only when aligned in a clear row or column.";
+            if (tutorialRound == 2) return "Shooting and reload.\nSPACE fires toward the triangle tip. Each shot spends one bullet from the 15-shot magazine.\nR reloads when you have ammo left, up to 100 total. Five hits knock any enemy out for 5 seconds.\nPink enemies shoot only when aligned in a clear row or column.";
             if (tutorialRound == 3) return "Light and resources.\nC toggles the flashlight; it reveals farther but drains its own battery.\nCoins buy upgrades, ammo boxes give 10 bullets, health boxes heal, and battery boxes refill tools.\nResources are kept only when the round is won.";
             return "Boss, key and modifiers.\nThe purple square boss chases, shoots when aligned, and speeds up when far away.\nFrom locked rounds, find the golden key before stepping on the green exit.\nLater rounds add traps, low visibility, map jams and dash limits.";
         }
         if (currentLanguage == LANGUAGE_KO)
         {
             if (tutorialRound == 1) return "이동과 추가 조작.\nWASD 또는 방향키로 움직이고 TAB을 사용합니다.\nSHIFT는 라운드마다 3번만 사용할 수 있습니다.\n빨간 적은 가까우면 추격합니다. 초록 출구로 가세요.";
-            if (tutorialRound == 2) return "분홍 적은 총을 쏘는 적입니다.\n같은 행이나 열에서 벽 없이 마주치면 멈추고 발사합니다.\n스페이스로 쏘세요. 적은 5번 맞으면 5초 동안 기절합니다.\n탄약은 30발이고 R로 재장전합니다.";
+            if (tutorialRound == 2) return "분홍 적은 총을 쏘는 적입니다.\n같은 행이나 열에서 벽 없이 마주치면 멈추고 발사합니다.\n스페이스로 쏘세요. 적은 5번 맞으면 5초 동안 기절합니다.\n탄창은 15발이고 최대 탄약은 100입니다.";
             if (tutorialRound == 3) return "손전등을 사용할 수 있습니다.\nC로 켜고 끕니다. 더 넓게 보이지만 배터리를 소모합니다.\n튜토리얼 라운드는 항상 배터리 100퍼센트로 시작합니다.\n모퉁이와 출구를 확인할 때 짧게 사용하세요.";
             return "보라색 사각형은 보스입니다.\n플레이어를 찾아오고, 일직선이면 쏘며, 멀어지면 빨라집니다.\n보스도 5번 맞으면 5초 동안 기절합니다.\n게임은 두 명 넘는 적이 동시에 플레이어를 막지 않게 조정합니다.";
         }
         if (currentLanguage == LANGUAGE_ES)
         {
             if (tutorialRound == 1) return "Movimiento, dash y mapa.\nWASD/flechas mueven. SHIFT hace dash en la direccion actual, con cargas limitadas por ronda.\nTAB abre el mapa tactico mientras tenga bateria; cierralo para ahorrar carga.\nPisa la salida verde para avanzar.";
-            if (tutorialRound == 2) return "Disparo y recarga.\nESPACIO dispara hacia la punta del triangulo. Cada disparo gasta una bala del cargador de 30.\nR recarga si tienes municion de reserva. Cinco impactos dejan K.O. a cualquier enemigo por 5 segundos.\nLos rosas disparan solo si te ven en fila o columna sin pared.";
+            if (tutorialRound == 2) return "Disparo y recarga.\nESPACIO dispara hacia la punta del triangulo. Cada disparo gasta una bala del cargador de 15.\nR recarga si tienes municion, hasta 100 balas totales. Cinco impactos dejan K.O. a cualquier enemigo por 5 segundos.\nLos rosas disparan solo si te ven en fila o columna sin pared.";
             if (tutorialRound == 3) return "Luz y recursos.\nC enciende o apaga la linterna; revela mas, pero consume su propia bateria.\nMonedas compran mejoras, cajas de municion dan 10 balas, vida cura y baterias recargan herramientas.\nLos recursos se guardan solo si ganas la ronda.";
             return "Jefe, llave y modificadores.\nEl jefe morado persigue, dispara alineado y acelera cuando esta lejos.\nEn rondas cerradas, encuentra la llave dorada antes de pisar la salida verde.\nLuego aparecen trampas, baja vision, mapa bloqueado y menos dash.";
         }
 
         if (tutorialRound == 1) return "Movimento, dash e mapa.\nWASD/setas movem. SHIFT da dash na direcao atual, com cargas limitadas por round.\nTAB abre o mapa tatico enquanto a bateria dele durar; feche para economizar carga.\nPise no bloco verde para avancar.";
-        if (tutorialRound == 2) return "Tiro e recarga.\nESPACO atira para onde o triangulo aponta. Cada tiro gasta 1 bala do pente de 30.\nR recarrega quando existe municao reserva. Cinco acertos nocauteiam qualquer inimigo por 5 segundos.\nRosas so atiram quando enxergam voce em linha ou coluna sem parede.";
+        if (tutorialRound == 2) return "Tiro e recarga.\nESPACO atira para onde o triangulo aponta. Cada tiro gasta 1 bala do pente de 15.\nR recarrega quando existe municao, ate 100 municoes totais. Cinco acertos nocauteiam qualquer inimigo por 5 segundos.\nRosas so atiram quando enxergam voce em linha ou coluna sem parede.";
         if (tutorialRound == 3) return "Luz e recursos.\nC liga/desliga a lanterna; ela revela mais longe, mas gasta a propria bateria.\nMoedas compram melhorias, caixas de municao dao 10 balas, vida cura e baterias recarregam ferramentas.\nRecursos so ficam se voce vencer o round.";
         return "Chefao, chave e modificadores.\nO quadrado roxo persegue, atira quando fica alinhado e acelera quando esta longe.\nEm rounds trancados, pegue a chave dourada antes de pisar no bloco verde.\nDepois entram armadilhas, pouca visao, mapa bloqueado e menos dash.";
     }
 
     if (currentLanguage == LANGUAGE_EN)
     {
-        if (officialRound == 1) return "Official run starts now.\nRounds 1 and 2 use red patrol enemies and pink shooters.\nYou start with 100 health and 30 loaded shots.\nReach the green exit to advance.";
+        if (officialRound == 1) return "Official run starts now.\nRounds 1 and 2 use red patrol enemies and pink shooters.\nYou start with 50 health, 15 loaded shots and 30 total ammo, capped at 100.\nReach the green exit to advance.";
         if (officialRound == 3) return "Flashlight rounds begin.\nRounds 3 and 4 include red and pink enemies plus limited visibility.\nYour battery does not refill every round, so spend it carefully.\nIt refills on round 5 and then every 5 rounds.";
         if (officialRound == 4) return "Security doors are now active.\nFind the golden key before the exit opens.\nCoins, ammo, health and battery cells can appear in side paths.";
         if (officialRound == 5) return "Round 5 refills tool batteries to 100 percent.\nThis round focuses on the purple boss only.\nKeep moving, break alignment when it shoots, and hit it five times to knock it out.";
@@ -3720,10 +3727,10 @@ const char *GetRoundInfoBody(void)
     }
     if (currentLanguage == LANGUAGE_ES)
     {
-        if (officialRound == 1) return "La partida oficial empieza ahora.\nLas rondas 1 y 2 usan enemigos rojos de patrulla y rosas que disparan.\nEmpiezas con 100 de vida y 30 balas cargadas.\nLlega a la salida verde para avanzar.";
+        if (officialRound == 1) return "La partida oficial empieza ahora.\nLas rondas 1 y 2 usan enemigos rojos de patrulla y rosas que disparan.\nEmpiezas con 50 de vida, 15 balas cargadas y 30 totales, con limite de 100.\nLlega a la salida verde para avanzar.";
         if (officialRound == 3) return "Empiezan las rondas con linterna.\nLas rondas 3 y 4 tienen rojos, rosas y vision limitada.\nLa bateria no se recarga cada ronda; usala con cuidado.\nSe recarga en la ronda 5 y luego cada 5 rondas.";
         if (officialRound == 4) return "Las puertas de seguridad estan activas.\nEncuentra la llave dorada antes de abrir la salida.\nHay monedas, municion, vida y bateria en rutas laterales.";
-        if (officialRound == 5) return "La ronda 5 recarga la bateria de la linterna al 50 por ciento.\nEsta ronda se centra solo en el jefe morado.\nSigue moviendote, rompe la alineacion cuando dispare y acierta cinco veces para dejarlo K.O.";
+        if (officialRound == 5) return "La ronda 5 recarga las baterias de herramientas al 100 por ciento.\nEsta ronda se centra solo en el jefe morado.\nSigue moviendote, rompe la alineacion cuando dispare y acierta cinco veces para dejarlo K.O.";
         if (officialRound == 6) return "Las rondas 6 y 7 combinan al jefe con enemigos rojos.\nEl jefe te persigue directo mientras los rojos presionan las rutas cercanas.\nUsa disparos para abrir espacio y evita quedar acorralado.";
         if (officialRound == 7) return "Las rutas laterales pueden tener mejores recompensas.\nMonedas, municion, vida y bateria solo se guardan si ganas.\nSi mueres, todo vuelve al estado previo a la ronda.";
         if (officialRound == 8) return "Las rondas 8 y 9 suman todos los tipos de enemigo menos la oscuridad de la linterna.\nLos rojos persiguen, los rosas disparan y el jefe acelera cuando esta lejos.\nSigue moviendote y rompe lineas rectas antes de los disparos.";
@@ -3735,7 +3742,7 @@ const char *GetRoundInfoBody(void)
     }
     if (currentLanguage == LANGUAGE_KO)
     {
-        if (officialRound == 1) return "공식 게임이 시작됩니다.\n라운드 1과 2에는 빨간 순찰 적과 분홍 사격 적이 나옵니다.\n체력 100, 탄약 30발로 시작하고 배터리는 이후 라운드에 대비합니다.\n초록 출구에 도착하면 다음 라운드로 갑니다.";
+        if (officialRound == 1) return "공식 게임이 시작됩니다.\n라운드 1과 2에는 빨간 순찰 적과 분홍 사격 적이 나옵니다.\n체력 50, 장전 15발, 총 탄약 30발로 시작하며 최대는 100입니다.\n초록 출구에 도착하면 다음 라운드로 갑니다.";
         if (officialRound == 3) return "손전등 라운드가 시작됩니다.\n라운드 3과 4에는 빨간 적, 분홍 적, 제한된 시야가 있습니다.\n배터리는 매 라운드 충전되지 않으니 아껴 쓰세요.\n라운드 5부터 5라운드마다 충전됩니다.";
         if (officialRound == 5) return "라운드 5에서는 손전등 배터리가 100퍼센트로 충전됩니다.\n이번 라운드는 보라색 보스 하나에 집중합니다.\n계속 움직이고, 보스가 쏠 때 일직선을 피하고, 5번 맞혀 기절시키세요.";
         if (officialRound == 6) return "라운드 6과 7은 보스와 빨간 적이 함께 나옵니다.\n보스는 직접 추적하고 빨간 적은 주변 길을 압박합니다.\n총으로 공간을 만들고 막히지 않게 움직이세요.";
@@ -3747,7 +3754,7 @@ const char *GetRoundInfoBody(void)
         return "미로를 지나 초록 출구에 도착하세요.\n스페이스로 발사, R로 재장전, 가능할 때 C로 손전등을 켭니다.\n계속 움직이고 기절 시간을 이용해 길을 여세요.";
     }
 
-    if (officialRound == 1) return "A partida oficial comeca agora.\nWASD/setas movem; ESPACO atira; R recarrega; SHIFT da dash; TAB abre o mapa com bateria propria.\nVoce inicia com 100 de vida e 30 municoes na arma.\nPise no bloco verde para avancar.";
+    if (officialRound == 1) return "A partida oficial comeca agora.\nWASD/setas movem; ESPACO atira; R recarrega; SHIFT da dash; TAB abre o mapa com bateria propria.\nVoce inicia com 50 de vida, 15 no pente e 30 municoes totais, com limite de 100.\nPise no bloco verde para avancar.";
     if (officialRound == 3) return "Comecam os rounds com lanterna.\nC liga/desliga a lanterna; ela revela mais longe, mas consome a propria bateria.\nTAB tambem tem bateria separada, entao use o mapa em consultas curtas.\nAs baterias voltam no round 5 e depois a cada 5 rounds.";
     if (officialRound == 4) return "Portas de seguranca foram ativadas.\nAche a chave dourada antes de abrir a saida.\nMoedas, municao, vida e bateria podem aparecer em rotas laterais.";
     if (officialRound == 5) return "No round 5 as baterias das ferramentas voltam para 100 por cento.\nEste round foca apenas no chefao roxo.\nContinue se movendo, quebre o alinhamento quando ele atirar e acerte cinco tiros para nocautea-lo.";
@@ -3786,7 +3793,7 @@ void ResetOfficialRunStats(void)
     playerMaxHealth = PLAYER_START_HEALTH;
     playerHealth = playerMaxHealth;
     playerMaxAmmo = PLAYER_MAX_AMMO;
-    playerTotalAmmo = playerMaxAmmo;
+    playerTotalAmmo = PLAYER_START_AMMO;
     playerAmmo = PLAYER_MAGAZINE_SIZE;
     flashlightBattery = FLASHLIGHT_MAX_BATTERY;
     mapBattery = MAP_MAX_BATTERY;
@@ -6667,7 +6674,8 @@ Rectangle GetShopButtonRect(int index)
 
 bool IsShopBatteryAvailable(void)
 {
-    return !inTutorialSequence;
+    return !inTutorialSequence &&
+           (flashlightBattery < FLASHLIGHT_MAX_BATTERY || mapBattery < MAP_MAX_BATTERY);
 }
 
 const char *GetShopBuyLabel(void)
@@ -6684,7 +6692,7 @@ const char *GetShopItemDescription(int index)
         if (index == 0) return "Buy +30 ammo";
         if (index == 1) return "Max health +5";
         if (index == 2) return "Reveal map for 3s";
-        return "Tool batteries to 100%";
+        return "Tool batteries +50%";
     }
 
     if (currentLanguage == LANGUAGE_ES)
@@ -6692,7 +6700,7 @@ const char *GetShopItemDescription(int index)
         if (index == 0) return "Compra +30 municion";
         if (index == 1) return "Vida max +5";
         if (index == 2) return "Revela mapa 3s";
-        return "Baterias al 100%";
+        return "Baterias +50%";
     }
 
     if (currentLanguage == LANGUAGE_KO)
@@ -6700,13 +6708,13 @@ const char *GetShopItemDescription(int index)
         if (index == 0) return "최대 탄약 +30";
         if (index == 1) return "최대 체력 +5";
         if (index == 2) return "3초 동안 지도를 밝게 합니다";
-        return "도구 배터리 100%";
+        return "도구 배터리 +50%";
     }
 
     if (index == 0) return "Compra +30 municao";
     if (index == 1) return "Vida max +5";
     if (index == 2) return "Revela mapa 3s";
-    return "Baterias para 100%";
+    return "Baterias +50%";
 }
 
 void DrawShopItemIcon(int index, Vector2 center, float radius, Color accent)
@@ -6875,7 +6883,7 @@ void DrawShopPanel(void)
                    healthCanGrow && playerCoins >= SHOP_STANDARD_PRICE, (Color){ 190, 70, 255, 255 });
     DrawShopButton(2, T(TEXT_SHOP_BUY_LIGHTNING), IsLightningAvailableThisRound() ? TextFormat("%d PTS", SHOP_LIGHTNING_PRICE) : T(TEXT_SHOP_LOCKED),
                    IsLightningAvailableThisRound() && playerCoins >= SHOP_LIGHTNING_PRICE, (Color){ 120, 230, 255, 255 });
-    DrawShopButton(3, T(TEXT_SHOP_BUY_BATTERY), batteryAvailable ? TextFormat("%d PTS", SHOP_STANDARD_PRICE) : T(TEXT_SHOP_LOCKED),
+    DrawShopButton(3, T(TEXT_SHOP_BUY_BATTERY), batteryAvailable ? TextFormat("%d PTS", SHOP_STANDARD_PRICE) : (inTutorialSequence ? T(TEXT_SHOP_LOCKED) : T(TEXT_SHOP_MAX)),
                    batteryAvailable && playerCoins >= SHOP_STANDARD_PRICE, (Color){ 255, 205, 60, 255 });
 
     Rectangle startButton = GetShopStartButtonRect();
@@ -6906,7 +6914,6 @@ bool HandleShopButtons(void)
     if (CheckCollisionPointRec(mousePosition, GetShopButtonRect(0)) && playerTotalAmmo < PLAYER_AMMO_CAP && playerCoins >= SHOP_STANDARD_PRICE)
     {
         playerCoins -= SHOP_STANDARD_PRICE;
-        playerMaxAmmo += SHOP_AMMO_GAIN;
         playerTotalAmmo += SHOP_AMMO_GAIN;
         ClampProgressState();
         SaveProgress();
@@ -6937,8 +6944,16 @@ bool HandleShopButtons(void)
     if (CheckCollisionPointRec(mousePosition, GetShopButtonRect(3)) && IsShopBatteryAvailable() && playerCoins >= SHOP_STANDARD_PRICE)
     {
         playerCoins -= SHOP_STANDARD_PRICE;
-        flashlightBattery = FLASHLIGHT_MAX_BATTERY;
-        mapBattery = MAP_MAX_BATTERY;
+        flashlightBattery += SHOP_BATTERY_GAIN;
+        mapBattery += SHOP_BATTERY_GAIN;
+        if (flashlightBattery > FLASHLIGHT_MAX_BATTERY)
+        {
+            flashlightBattery = FLASHLIGHT_MAX_BATTERY;
+        }
+        if (mapBattery > MAP_MAX_BATTERY)
+        {
+            mapBattery = MAP_MAX_BATTERY;
+        }
         SaveProgress();
         return true;
     }
