@@ -1,84 +1,129 @@
+
 # ByteMaze
 
-ByteMaze e um jogo de acao e sobrevivencia em labirintos procedurais, feito em C com raylib para o 1.44MB Game Dev Contest.
+[![1.44MB Game Dev Contest](https://img.shields.io/badge/Contest-1.44MB%20Game%20Dev-blueviolet)](https://2pgarcade.com/contest-144mb.html)
+[![Language](https://img.shields.io/badge/Language-C-blue)](https://en.wikipedia.org/wiki/C_(programming_language))
+[![Library](https://img.shields.io/badge/Engine-raylib-raylib)](https://www.raylib.com/)
+[![License](https://img.shields.io/badge/License-zlib%2Flibpng-green)](raylib/LICENSE)
 
-O objetivo e atravessar cada labirinto, encontrar a chave quando a saida estiver trancada e pisar no bloco verde para avancar. A cada round o jogo mistura inimigos, visibilidade, armadilhas, recursos e modificadores para manter a partida evoluindo dentro do limite de 1,474,560 bytes descompactados.
+**ByteMaze** é um jogo de ação e sobrevivência rápida ambientado em labirintos procedurais. Desenvolvido em linguagem **C** utilizando a biblioteca **raylib**, o projeto foi projetado do zero sob regras rigorosas de otimização de tamanho.
 
-## Desenvolvedora
+---
 
-Sofia A. Figueredo  
-GitHub: [@SofiaAFigueredo](https://github.com/SofiaAFigueredo)
+## 🏆 Sobre a Competição
 
-O desenvolvimento foi auxiliado pelo Codex para revisao de codigo, ajustes de jogabilidade, organizacao tecnica e documentacao.
+O jogo foi desenvolvido para o **[1.44MB Game Dev Contest](https://2pgarcade.com/contest-144mb.html)**, organizado pela **2P Game Arcade**. O grande desafio da competição é fazer um jogo moderno, completo e divertido caber no espaço histórico de um disquete de 3.5" (1.44 MB).
 
-## Competicao
+### Directrizes e Restrições Atendidas:
+* **Tamanho Máximo Total:** $\le 1.474.560 \text{ bytes}$ após descompactar o pacote final.
+* **Stand-alone / Offline:** Executável independente que roda localmente sem requisições web ou servidores externos.
+* **Engine & Assets Integrados:** O tamanho final contabiliza o binário gerado, a runtime e todos os assets gráficos e de fonte inclusos.
 
-ByteMaze foi preparado para o 1.44MB Game Dev Contest da 2P Game Arcade.
+---
 
-Regras principais consideradas:
+## 🕹️ Como Jogar
 
-- Limite total apos descompactar: 1,474,560 bytes.
-- O jogo precisa rodar como executavel independente.
-- Jogos de navegador nao sao aceitos.
-- Engine e runtime contam dentro do limite.
+### Controles Gerais
 
-## Como Jogar
+| Tecla | Ação |
+| :--- | :--- |
+| `W` `A` `S` `D` ou `Setas` | Movimentação do personagem |
+| `SHIFT` | **Dash**: Impulso rápido na direção atual (cargas limitadas) |
+| `ESPAÇO` | **Atirar**: Dispara na direção do ponteiro/triângulo |
+| `R` | **Recarregar**: Carrega o pente de munição |
+| `TAB` | **Mapa Tático**: Revela o mapa (consome bateria dedicada) |
+| `C` | **Lanterna**: Liga/desliga o iluminador (consome bateria) |
+| `F` | **Raio**: Ativa uma carga manual de choque nos inimigos |
 
-- `WASD` ou setas: mover.
-- `SHIFT`: dash na direcao atual, com cargas limitadas por round.
-- `ESPACO`: atirar na direcao do triangulo.
-- `R`: recarregar.
-- `TAB`: abrir o mapa tatico enquanto houver bateria do mapa.
-- `C`: ligar/desligar a lanterna quando ela estiver disponivel.
-- `F`: usar uma carga manual de raio quando disponivel.
+---
 
-## Mecanicas
+## ⚙️ Mecanicas do Jogo
 
-- Labirinto procedural novo a cada round.
-- Saida verde obrigatoria para concluir o round.
-- Rounds com saida trancada exigem encontrar a chave dourada.
-- O mapa e a lanterna possuem baterias separadas.
-- Caixas de municao adicionam 10 balas.
-- A municao total e limitada a 100.
-- Inimigos podem ser nocauteados por alguns segundos apos receberem tiros suficientes.
-- O chefao persegue o jogador, atira quando fica alinhado e acelera quando esta longe.
-- Rounds avancados adicionam armadilhas, baixa visibilidade, mapa bloqueado, menos dash e pressao do chefao.
+- **Labirintos Procedurais:** Cada round gera uma estrutura única de caminhos e obstáculos.
+- **Condição de Vitória:** Alcance e pise no **bloco verde** para avançar para o próximo nível.
+- **Saída Trancada:** Em níveis avançados, a saída verde só é liberada após encontrar a **chave dourada**.
+- **Gestão de Recursos:**
+  - **Munição:** Caixas pelo mapa adicionam 10 balas (limite máximo acumulável: 100).
+  - **Baterias:** O mapa tático (`TAB`) e a lanterna (`C`) utilizam cargas de bateria independentes.
+- **Combate e Inimigos:**
+  - **Inimigos Comuns:** Podem ser temporariamente nocauteados por alguns segundos ao receberem tiros suficientes.
+  - **O Chefão (Boss):** Persegue ativamente o jogador, acelera quando a distância aumenta e dispara projéteis assim que obtém linha de visão direta.
+- **Dificuldade Progressiva:** Rounds mais avançados introduzem armadilhas, perda de visibilidade, bloqueio no mapa, restrição de *dashes* e maior agressividade do chefão.
 
-## Build
+---
 
-Requisitos:
+## 📊 Estatísticas e Orçamento de Tamanho
 
-- Compilador C.
-- CMake.
-- raylib incluida como submodulo/pasta do projeto.
+A otimização de espaço foi fundamental no desenvolvimento do ByteMaze. A verificação do tamanho considera o executável compilado junto da pasta de assets obrigatória (`src/assets`).
 
-Comandos:
+| Componente | Tamanho (Bytes) | % do Limite (1.44 MB) |
+| :--- | :--- | :--- |
+| **Executável Linux** | ~577.528 B | 39.16% |
+| **Assets (`src/assets`)** | ~48.404 B | 3.28% |
+| **Total Atual** | **625.932 B** | **42.45%** |
 
+> ⚠️ **Nota para Build Windows:** Ao compilar via MinGW/GCC para Windows (`bytemaze.exe`), certifique-se de executar `make size` para garantir que a soma das dependências permaneça abaixo dos 1.474.560 bytes exigidos.
+
+---
+
+## 🛠️ Como Compilar e Executar
+
+### Pré-requisitos
+- Compilador C (`gcc` ou `clang`).
+- **CMake** e **Make**.
+- Submódulo da biblioteca **raylib** clonado dentro do diretório.
+
+### Comandos de Build
+
+1. Clone o repositório com os submódulos:
+   ```sh
+   git clone --recursive [https://github.com/SofiaAFigueredo/ByteMaze.git](https://github.com/SofiaAFigueredo/ByteMaze.git)
+   cd ByteMaze
+
+```
+
+2. Gere a versão de release otimizada:
 ```sh
 make release
-make size
+
 ```
 
-O alvo `make size` soma o executavel gerado e os assets em `src/assets`, que e o conjunto necessario para rodar o jogo.
 
-## Tamanho Atual
+3. Verifique se o pacote cumpre as regras de tamanho da competição:
+```sh
+make size
 
-Ultima verificacao local:
+```
+
+
+
+---
+
+## 📂 Estrutura de Arquivos Principais
 
 ```text
-625932 bytes (577528 executavel + 48404 assets, 42.45% de 1474560)
+├── Makefile                   # Script de build otimizado e medição de tamanho
+├── src/
+│   ├── main.c                 # Lógica e código completo do jogo
+│   └── assets/
+│       └── fonts/             # Subset de fonte otimizado (NotoSansKR)
+└── raylib/                    # Submódulo do Raylib
+
 ```
 
-Esse resultado e para o binario Linux `bytemaze` gerado neste ambiente. Para enviar Windows, recompile `bytemaze.exe` em um ambiente Windows/MinGW e confira novamente que o executavel mais `src/assets` continuam abaixo de 1,474,560 bytes.
+> 📌 **Aviso:** O arquivo `bytemaze_save.dat` é utilizado apenas para o progresso local do jogador e **não** deve ser incluído na submissão oficial para a 2P Game Arcade.
 
-## Arquivos Relevantes
+---
 
-- `src/main.c`: codigo completo do jogo.
-- `src/assets/fonts/NotoSansKR-Subset-Bold.ttf`: fonte incluida no pacote final.
-- `Makefile`: build otimizado e verificacao de tamanho.
+## 👤 Desenvolvedora
 
-Nao envie `bytemaze_save.dat`; ele e apenas progresso local do jogador.
+* **Sofia A. Figueredo**
+* GitHub: [@SofiaAFigueredo](https://github.com/SofiaAFigueredo)
 
-## Licenca
+*O desenvolvimento contou com o suporte do OpenAI Codex para otimização técnica, refatoração de código, balanceamento de jogabilidade e documentação.*
 
-Este repositorio usa raylib como biblioteca grafica. Consulte a licenca da raylib em `raylib/LICENSE`.
+---
+
+## 📜 Licença
+
+Este projeto faz uso da biblioteca de código aberto **raylib**. Consulte os termos de uso em [`raylib/LICENSE`](https://www.google.com/search?q=raylib/LICENSE).
